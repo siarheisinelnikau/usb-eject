@@ -30,8 +30,14 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn display_name<'a>(&'a self, aliases: &'a std::collections::BTreeMap<String, String>) -> &'a str {
-        aliases.get(&self.identity.instance_id).map(String::as_str).unwrap_or(&self.name)
+    pub fn display_name<'a>(
+        &'a self,
+        aliases: &'a std::collections::BTreeMap<String, String>,
+    ) -> &'a str {
+        aliases
+            .get(&self.identity.instance_id)
+            .map(String::as_str)
+            .unwrap_or(&self.name)
     }
 }
 
@@ -40,7 +46,11 @@ pub enum EjectResult {
     Removed,
     Cancelled,
     Stale,
-    Refused { reason: String, applications: Vec<String>, diagnostics: String },
+    Refused {
+        reason: String,
+        applications: Vec<String>,
+        diagnostics: String,
+    },
 }
 
 /// The only mutation boundary. Mock implementations never call Windows.
@@ -55,7 +65,9 @@ pub fn eject_checked(
     selected: &Identity,
     cancel: &AtomicBool,
 ) -> Result<EjectResult, String> {
-    if cancel.load(Ordering::Acquire) { return Ok(EjectResult::Cancelled); }
+    if cancel.load(Ordering::Acquire) {
+        return Ok(EjectResult::Cancelled);
+    }
     let fresh = storage.discover()?;
     let Some(device) = fresh.iter().find(|d| &d.identity == selected) else {
         return Ok(EjectResult::Stale);
@@ -63,7 +75,9 @@ pub fn eject_checked(
     if let Some(reason) = &device.blocked {
         return Err(format!("Ejection is blocked: {reason}"));
     }
-    if cancel.load(Ordering::Acquire) { return Ok(EjectResult::Cancelled); }
+    if cancel.load(Ordering::Acquire) {
+        return Ok(EjectResult::Cancelled);
+    }
     storage.request_eject(device, cancel)
 }
 
@@ -100,14 +114,30 @@ mod tests {
 
     pub fn fixture() -> Device {
         Device {
-            identity: Identity { instance_id: "USBSTOR\\FIXTURE".into(), interface_path: "fixture-interface".into(), disk_number: 5, serial: "SAMPLE".into(), volumes: vec!["volume-a".into(), "volume-b".into()] },
-            name: "Test drive".into(), bus: "USB".into(), capacity: Some(64 << 30), volumes: vec![], blocked: None,
+            identity: Identity {
+                instance_id: "USBSTOR\\FIXTURE".into(),
+                interface_path: "fixture-interface".into(),
+                disk_number: 5,
+                serial: "SAMPLE".into(),
+                volumes: vec!["volume-a".into(), "volume-b".into()],
+            },
+            name: "Test drive".into(),
+            bus: "USB".into(),
+            capacity: Some(64 << 30),
+            volumes: vec![],
+            blocked: None,
         }
     }
-    struct Mock { devices: Vec<Device>, requests: Cell<usize>, cancel_during_scan: Option<std::sync::Arc<AtomicBool>> }
+    struct Mock {
+        devices: Vec<Device>,
+        requests: Cell<usize>,
+        cancel_during_scan: Option<std::sync::Arc<AtomicBool>>,
+    }
     impl Storage for Mock {
         fn discover(&self) -> Result<Vec<Device>, String> {
-            if let Some(flag) = &self.cancel_during_scan { flag.store(true, Ordering::Release); }
+            if let Some(flag) = &self.cancel_during_scan {
+                flag.store(true, Ordering::Release);
+            }
             Ok(self.devices.clone())
         }
         fn request_eject(&self, _: &Device, _: &AtomicBool) -> Result<EjectResult, String> {
@@ -120,15 +150,26 @@ mod tests {
         let selected = fixture();
         let mut replacement = fixture();
         replacement.identity.serial = "OTHER".into();
-        let mock = Mock { devices: vec![replacement], requests: Cell::new(0), cancel_during_scan: None };
-        assert_eq!(eject_checked(&mock, &selected.identity, &AtomicBool::new(false)).unwrap(), EjectResult::Stale);
+        let mock = Mock {
+            devices: vec![replacement],
+            requests: Cell::new(0),
+            cancel_during_scan: None,
+        };
+        assert_eq!(
+            eject_checked(&mock, &selected.identity, &AtomicBool::new(false)).unwrap(),
+            EjectResult::Stale
+        );
         assert_eq!(mock.requests.get(), 0);
     }
     #[test]
     fn blocked_system_device_never_reaches_mutation() {
         let mut device = fixture();
         device.blocked = Some("Windows system volume".into());
-        let mock = Mock { devices: vec![device.clone()], requests: Cell::new(0), cancel_during_scan: None };
+        let mock = Mock {
+            devices: vec![device.clone()],
+            requests: Cell::new(0),
+            cancel_during_scan: None,
+        };
         assert!(eject_checked(&mock, &device.identity, &AtomicBool::new(false)).is_err());
         assert_eq!(mock.requests.get(), 0);
     }
@@ -136,15 +177,29 @@ mod tests {
     fn cancellation_during_discovery_prevents_mutation() {
         let flag = std::sync::Arc::new(AtomicBool::new(false));
         let device = fixture();
-        let mock = Mock { devices: vec![device.clone()], requests: Cell::new(0), cancel_during_scan: Some(flag.clone()) };
-        assert_eq!(eject_checked(&mock, &device.identity, &flag).unwrap(), EjectResult::Cancelled);
+        let mock = Mock {
+            devices: vec![device.clone()],
+            requests: Cell::new(0),
+            cancel_during_scan: Some(flag.clone()),
+        };
+        assert_eq!(
+            eject_checked(&mock, &device.identity, &flag).unwrap(),
+            EjectResult::Cancelled
+        );
         assert_eq!(mock.requests.get(), 0);
     }
     #[test]
     fn grouped_device_is_requested_exactly_once() {
         let device = fixture();
-        let mock = Mock { devices: vec![device.clone()], requests: Cell::new(0), cancel_during_scan: None };
-        assert_eq!(eject_checked(&mock, &device.identity, &AtomicBool::new(false)).unwrap(), EjectResult::Removed);
+        let mock = Mock {
+            devices: vec![device.clone()],
+            requests: Cell::new(0),
+            cancel_during_scan: None,
+        };
+        assert_eq!(
+            eject_checked(&mock, &device.identity, &AtomicBool::new(false)).unwrap(),
+            EjectResult::Removed
+        );
         assert_eq!(mock.requests.get(), 1);
     }
     #[test]
@@ -152,8 +207,14 @@ mod tests {
         let old = fixture();
         let mut changed = old.clone();
         changed.identity.volumes.pop();
-        let mock = Mock { devices: vec![changed], requests: Cell::new(0), cancel_during_scan: None };
-        assert_eq!(eject_checked(&mock, &old.identity, &AtomicBool::new(false)).unwrap(), EjectResult::Stale);
+        let mock = Mock {
+            devices: vec![changed],
+            requests: Cell::new(0),
+            cancel_during_scan: None,
+        };
+        assert_eq!(
+            eject_checked(&mock, &old.identity, &AtomicBool::new(false)).unwrap(),
+            EjectResult::Stale
+        );
     }
 }
-
