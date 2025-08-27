@@ -152,6 +152,15 @@ fn apply(pid: u32, destination: &Path, expected: &str) -> Result<(), String> {
                 "Cannot replace the portable executable (move it to a writable folder): {e}"
             ));
         }
+        if let Ok(root) = settings::data_dir() {
+            let _ = fs::write(
+                root.join("update-result.txt"),
+                format!(
+                    "Update installed: version {}. Previous executable retained beside the installation.",
+                    update::VERSION
+                ),
+            );
+        }
         if let Err(e) = Command::new(&destination).spawn() {
             // Restore the original binary if the new executable cannot be started.
             settings::replace(&backup, &destination).map_err(|restore| {

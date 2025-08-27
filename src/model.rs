@@ -13,6 +13,7 @@ pub struct Volume {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub instance_id: String,
+    pub parent_instance_id: String,
     pub interface_path: String,
     pub disk_number: u32,
     pub serial: String,
@@ -59,6 +60,36 @@ pub trait Storage {
     fn request_eject(&self, device: &Device, cancel: &AtomicBool) -> Result<EjectResult, String>;
 }
 
+pub fn block_reason(
+    system_disks: &[u32],
+    disk_number: u32,
+    hotplug: bool,
+    volumes: &[Volume],
+) -> Option<String> {
+    if system_disks.is_empty() {
+        Some("Windows system disk could not be identified; ejection disabled".into())
+    } else if system_disks.contains(&disk_number) {
+        Some("Windows system disk is protected".into())
+    } else if !hotplug {
+        Some("Windows does not report removable media or a hot-plug device".into())
+    } else if volumes.iter().any(|v| v.disk_numbers.len() != 1) {
+        Some("Spanned or multi-disk volumes are not supported".into())
+    } else {
+        None
+    }
+}
+
+pub fn system_disks(volumes: &[Volume], windows_directory: &str) -> Vec<u32> {
+    let path = format!("{}\\", windows_directory.trim_end_matches('\\')).to_lowercase();
+    volumes
+        .iter()
+        .flat_map(|volume| volume.mounts.iter().map(move |mount| (volume, mount)))
+        .filter(|(_, mount)| path.starts_with(&mount.to_lowercase()))
+        .max_by_key(|(_, mount)| mount.len())
+        .map(|(volume, _)| volume.disk_numbers.clone())
+        .unwrap_or_default()
+}
+
 /// Re-enumerate before authorizing a mutation; never eject by a saved disk number alone.
 pub fn eject_checked(
     storage: &impl Storage,
@@ -91,18 +122,19 @@ pub fn capacity_text(bytes: Option<u64>) -> String {
 
 pub fn veto_reason(kind: i32) -> &'static str {
     match kind {
-        1 => "Windows could not identify the veto source",
-        2 => "A legacy device is using this device",
-        3 => "A pending operation is using this device",
-        4 => "A Windows application refused removal",
-        5 => "A Windows service refused removal",
-        6 => "An outstanding handle is open on this device",
+        1 => "A legacy device is using this device",
+        2 => "A pending close operation is using this device",
+        3 => "A Windows application refused removal",
+        4 => "A Windows service refused removal",
+        5 => "An outstanding handle is open on this device",
+        6 => "A device dependency prevents removal",
         7 => "A driver refused removal",
-        8 => "This device cannot be disabled",
+        8 => "The device does not support this removal request",
         9 => "There is insufficient power for this operation",
-        10 => "A device dependency prevents removal",
+        10 => "This device cannot be disabled",
         11 => "A legacy driver prevents removal",
         12 => "Windows requires a privilege that is unavailable in this session",
+        13 => "The device has already been removed",
         _ => "Windows refused safe removal",
     }
 }
@@ -116,6 +148,7 @@ mod tests {
         Device {
             identity: Identity {
                 instance_id: "USBSTOR\\FIXTURE".into(),
+                parent_instance_id: "USB\\FIXTURE".into(),
                 interface_path: "fixture-interface".into(),
                 disk_number: 5,
                 serial: "SAMPLE".into(),
@@ -216,5 +249,87 @@ mod tests {
             eject_checked(&mock, &old.identity, &AtomicBool::new(false)).unwrap(),
             EjectResult::Stale
         );
+    }
+
+    #[test]
+    fn unknown_system_mapping_and_spanned_volumes_fail_closed() {
+        assert!(block_reason(&[], 7, true, &[]).is_some());
+        assert!(block_reason(&[7], 7, true, &[]).is_some());
+        assert!(block_reason(&[0], 7, false, &[]).is_some());
+        let volume = Volume {
+            id: "spanned".into(),
+            mounts: vec!["R:\\".into()],
+            label: "Fixture".into(),
+            capacity: None,
+            free: None,
+            disk_numbers: vec![7, 8],
+        };
+        assert!(block_reason(&[0], 7, true, &[volume]).is_some());
+        assert!(block_reason(&[0], 7, true, &[]).is_none());
+    }
+    #[test]
+    fn windows_folder_mount_uses_the_longest_match_even_at_mount_root() {
+        let mut root = Volume {
+            id: "root".into(),
+            mounts: vec!["C:\\".into()],
+            label: "".into(),
+            capacity: None,
+            free: None,
+            disk_numbers: vec![0],
+        };
+        let mounted = Volume {
+            id: "windows".into(),
+            mounts: vec!["C:\\Windows\\".into()],
+            disk_numbers: vec![7],
+            ..root.clone()
+        };
+        assert_eq!(system_disks(&[root.clone(), mounted], "c:\\WINDOWS"), [7]);
+        root.disk_numbers.clear();
+        assert!(system_disks(&[root], "C:\\Windows").is_empty());
+    }
+    #[test]
+    fn cancelled_request_does_not_even_enumerate() {
+        struct NoCalls;
+        impl Storage for NoCalls {
+            fn discover(&self) -> Result<Vec<Device>, String> {
+                panic!("Must not enumerate a cancelled request")
+            }
+            fn request_eject(&self, _: &Device, _: &AtomicBool) -> Result<EjectResult, String> {
+                panic!("Must not eject")
+            }
+        }
+        assert_eq!(
+            eject_checked(&NoCalls, &fixture().identity, &AtomicBool::new(true)).unwrap(),
+            EjectResult::Cancelled
+        );
+    }
+    #[test]
+    fn windows_refusal_and_application_details_are_preserved() {
+        struct Refusing;
+        impl Storage for Refusing {
+            fn discover(&self) -> Result<Vec<Device>, String> {
+                Ok(vec![fixture()])
+            }
+            fn request_eject(&self, _: &Device, _: &AtomicBool) -> Result<EjectResult, String> {
+                Ok(EjectResult::Refused {
+                    reason: "Outstanding handle".into(),
+                    applications: vec!["Fixture editor (PID 123)".into()],
+                    diagnostics: "Close the file and retry".into(),
+                })
+            }
+        }
+        let result =
+            eject_checked(&Refusing, &fixture().identity, &AtomicBool::new(false)).unwrap();
+        let EjectResult::Refused {
+            reason,
+            applications,
+            diagnostics,
+        } = result
+        else {
+            panic!("Expected a refusal")
+        };
+        assert_eq!(reason, "Outstanding handle");
+        assert_eq!(applications, ["Fixture editor (PID 123)"]);
+        assert!(diagnostics.contains("retry"));
     }
 }

@@ -67,6 +67,7 @@ enum Event {
     Saved(Settings, Result<(), String>),
     Checked(Result<Option<Available>, String>),
     Progress(u64, u64),
+    Handoff,
     Installed(Result<(), String>),
 }
 
@@ -159,6 +160,7 @@ fn workers(
                             if net_cancel.load(Ordering::Acquire) {
                                 return Err("Update cancelled before installation".into());
                             }
+                            send_event(&events, hwnd, Event::Handoff);
                             installer::launch(&path, &checksum)
                         });
                     Event::Installed(result)
@@ -195,6 +197,7 @@ struct App {
     refresh_pending: bool,
     net_busy: bool,
     installing: bool,
+    handoff: bool,
     available: Option<Available>,
 }
 
@@ -258,7 +261,7 @@ impl App {
             INSPECT,
             !self.disk_busy && !self.installing && current && self.selected().is_some(),
         );
-        self.enabled(CANCEL, self.disk_busy || self.installing);
+        self.enabled(CANCEL, (self.disk_busy || self.installing) && !self.handoff);
         self.enabled(
             SAVE_ALIAS,
             self.settings_ready && !self.saving && !self.installing && self.selected().is_some(),
@@ -435,7 +438,7 @@ impl App {
                     self.status("Validating device identity and requesting safe removal… Cancel can stop preparation; an active Windows PnP request cannot be undone.");
                 }
             }
-            CANCEL => {
+            CANCEL if !self.handoff => {
                 self.disk_cancel.store(true, Ordering::Release);
                 self.net_cancel.store(true, Ordering::Release);
                 self.status("Cancellation requested. An active Windows ejection call cannot be interrupted; wait for its result. Downloads stop at the next read boundary.");
@@ -627,9 +630,14 @@ impl App {
                         total / 1024
                     ),
                 ),
+                Event::Handoff => {
+                    self.handoff = true;
+                    self.text(204, "Verification complete. Preparing executable replacement and restart; cancellation is no longer available.");
+                }
                 Event::Installed(result) => {
                     self.net_busy = false;
                     self.installing = false;
+                    self.handoff = false;
                     match result {
                         Ok(()) => {
                             unsafe {
@@ -941,26 +949,15 @@ unsafe extern "system" fn window_proc(
     }
 }
 
+// MAKEINTRESOURCEW(1) is a resource ordinal, deliberately not a memory pointer.
+#[allow(clippy::manual_dangling_ptr)]
 fn create_icon(instance: HINSTANCE) -> HICON {
-    // Original 32x32 disk-and-eject glyph, generated locally without external assets.
-    let mut pixels = [0u8; 32 * 32 * 4];
-    let mask = [0u8; 32 * 4];
-    for y in 0..32 {
-        for x in 0..32 {
-            let i = (y * 32 + x) * 4;
-            let disk = (5..27).contains(&x) && (4..28).contains(&y);
-            let arrow = (11..22).contains(&y) && (x as i32 - 16).abs() <= (y as i32 - 11) / 2;
-            let bar = (12..=20).contains(&x) && (23..=25).contains(&y);
-            let color = if arrow || bar {
-                [220, 255, 230, 255]
-            } else if disk {
-                [112, 70, 28, 255]
-            } else {
-                [0, 0, 0, 0]
-            };
-            pixels[i..i + 4].copy_from_slice(&color);
-        }
+    let embedded = unsafe { LoadImageW(instance, 1usize as *const u16, IMAGE_ICON, 32, 32, 0) };
+    if !embedded.is_null() {
+        return embedded;
     }
+    let pixels = crate::icon::pixels();
+    let mask = [0u8; 32 * 4];
     unsafe { CreateIcon(instance, 32, 32, 1, 32, mask.as_ptr(), pixels.as_ptr()) }
 }
 
@@ -1022,6 +1019,16 @@ pub fn run() {
             CloseHandle(mutex);
             return;
         }
+        let dpi = GetDpiForWindow(hwnd).max(96) as i32;
+        SetWindowPos(
+            hwnd,
+            null_mut(),
+            0,
+            0,
+            980 * dpi / 96,
+            850 * dpi / 96,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
         let mut controls = Vec::new();
         let mut add = |id: u16, class: &str, text: &str, style: u32| {
             let control = CreateWindowExW(
@@ -1154,6 +1161,7 @@ pub fn run() {
             refresh_pending: false,
             net_busy: false,
             installing: false,
+            handoff: false,
             available: None,
         };
         app.add_tray();

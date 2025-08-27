@@ -1,0 +1,31 @@
+name: Windows verification
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the stable Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Format, lint and test isolated fixtures
+        run: ./scripts/verify.ps1
+      - name: Build portable executable and notices
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: UsbEject-windows-x64-review-build
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
