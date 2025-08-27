@@ -261,32 +261,27 @@ pub struct WindowsStorage {
     pub generation: Arc<AtomicU64>,
     pub expected_generation: u64,
 }
+fn parent_identity(devinst: u32) -> Option<String> {
+    let mut parent = 0;
+    let mut name = [0u16; 2048];
+    if unsafe { CM_Get_Parent(&mut parent, devinst, 0) } != CR_SUCCESS {
+        return None;
+    }
+    if unsafe { CM_Get_Device_IDW(parent, name.as_mut_ptr(), name.len() as u32, 0) } != CR_SUCCESS {
+        return None;
+    }
+    Some(from_wide(&name))
+}
 impl Storage for WindowsStorage {
     fn discover(&self) -> Result<Vec<Device>, String> {
         let volumes = enumerate_volumes()?;
         let mut windows = [0u16; 32768];
         let len = unsafe { GetWindowsDirectoryW(windows.as_mut_ptr(), windows.len() as u32) };
-        let windows_path = from_wide(&windows).to_lowercase();
-        let system = if len == 0 || len as usize >= windows.len() {
-            None
+        let protected = if len == 0 || len as usize >= windows.len() {
+            vec![]
         } else {
-            volumes
-                .iter()
-                .filter(|v| {
-                    v.mounts
-                        .iter()
-                        .any(|m| windows_path.starts_with(&m.to_lowercase()))
-                })
-                .max_by_key(|v| {
-                    v.mounts
-                        .iter()
-                        .filter(|m| windows_path.starts_with(&m.to_lowercase()))
-                        .map(String::len)
-                        .max()
-                        .unwrap_or(0)
-                })
+            crate::model::system_disks(&volumes, &from_wide(&windows))
         };
-        let protected = system.map(|v| v.disk_numbers.clone()).unwrap_or_default();
         let set = unsafe {
             SetupDiGetClassDevsW(
                 &GUID_DEVINTERFACE_DISK,
@@ -311,6 +306,8 @@ impl Storage for WindowsStorage {
         }
         let set = Set(set);
         let mut devices = Vec::new();
+        let mut parent_disks =
+            std::collections::BTreeMap::<String, std::collections::BTreeSet<u32>>::new();
         for index in 0..1024 {
             let mut interface: SP_DEVICE_INTERFACE_DATA = unsafe { zeroed() };
             interface.cbSize = size_of::<SP_DEVICE_INTERFACE_DATA>() as u32;
@@ -399,6 +396,13 @@ impl Storage for WindowsStorage {
             } else {
                 continue;
             };
+            let parent = parent_identity(info.DevInst).unwrap_or_default();
+            if !parent.is_empty() {
+                parent_disks
+                    .entry(parent.clone())
+                    .or_default()
+                    .insert(number.DeviceNumber);
+            }
             // The Windows disk itself is never exposed in the candidate list.
             if protected.contains(&number.DeviceNumber) {
                 continue;
@@ -432,21 +436,15 @@ impl Storage for WindowsStorage {
                 .collect();
             let mut volume_ids: Vec<_> = mapped.iter().map(|v| v.id.clone()).collect();
             volume_ids.sort();
-            let blocked = if protected.is_empty() {
-                Some("Windows system disk could not be identified; ejection disabled".into())
-            } else if !hotplug {
-                Some("Windows does not report removable media or a hot-plug device".into())
-            } else if mapped.iter().any(|v| v.disk_numbers.len() != 1) {
-                Some("Spanned or multi-disk volumes are not supported".into())
-            } else {
-                None
-            };
+            let blocked =
+                crate::model::block_reason(&protected, number.DeviceNumber, hotplug, &mapped);
             let capacity = query::<GET_LENGTH_INFORMATION>(&handle, IOCTL_DISK_GET_LENGTH_INFO)
                 .ok()
                 .and_then(|n| u64::try_from(n.Length).ok());
             devices.push(Device {
                 identity: Identity {
                     instance_id,
+                    parent_instance_id: parent,
                     interface_path: path,
                     disk_number: number.DeviceNumber,
                     serial,
@@ -458,6 +456,20 @@ impl Storage for WindowsStorage {
                 volumes: mapped,
                 blocked,
             });
+        }
+        for device in &mut devices {
+            let parent = &device.identity.parent_instance_id;
+            if parent.is_empty() {
+                device.blocked = Some("Device parent topology could not be verified".into());
+            } else if parent_disks
+                .get(parent)
+                .is_some_and(|numbers| numbers.len() > 1)
+            {
+                device.blocked = Some(
+                    "Multiple disks share this device parent; shared enclosures are not supported"
+                        .into(),
+                );
+            }
         }
         devices.sort_by(|a, b| {
             a.name
@@ -477,6 +489,9 @@ impl Storage for WindowsStorage {
         if unsafe { CM_Locate_DevNodeW(&mut devinst, id.as_ptr(), CM_LOCATE_DEVNODE_NORMAL) }
             != CR_SUCCESS
         {
+            return Ok(EjectResult::Stale);
+        }
+        if parent_identity(devinst).as_ref() != Some(&device.identity.parent_instance_id) {
             return Ok(EjectResult::Stale);
         }
         // Check the interface again immediately before the PnP request; release all disk handles first.
@@ -514,7 +529,12 @@ impl Storage for WindowsStorage {
         }
         let source = from_wide(&veto_name);
         let applications = processes_on_device(device);
-        Ok(EjectResult::Refused { reason: format!("{}{} (Configuration Manager 0x{result:08X}, veto {veto})", veto_reason(veto), if source.is_empty() { String::new() } else { format!(": {source}") }), applications,
+        let reason = if result == CR_ACCESS_DENIED {
+            "Windows denied safe removal in this session; no elevation was requested"
+        } else {
+            veto_reason(veto)
+        };
+        Ok(EjectResult::Refused { reason: format!("{}{} (Configuration Manager 0x{result:08X}, veto {veto})", reason, if source.is_empty() { String::new() } else { format!(": {source}") }), applications,
             diagnostics: "Close files, Explorer windows, terminals and backup jobs on this drive, then retry. Listed programs run from this drive and are candidates, not a complete handle scan. To identify users of a specific file, enter its full path and choose Inspect file. Windows may withhold protected-process information.".into() })
     }
 }
@@ -640,6 +660,37 @@ pub fn inspect_file(device: &Device, path: &str) -> Result<Vec<String>, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sdk_veto_values_match_user_messages() {
+        assert!(veto_reason(PNP_VetoOutstandingOpen).contains("handle"));
+        assert!(veto_reason(PNP_VetoWindowsApp).contains("application"));
+        assert!(veto_reason(PNP_VetoWindowsService).contains("service"));
+        assert!(veto_reason(PNP_VetoDevice).contains("dependency"));
+        assert!(veto_reason(PNP_VetoNonDisableable).contains("disabled"));
+        assert!(veto_reason(PNP_VetoAlreadyRemoved).contains("already"));
+    }
+    #[test]
+    fn descriptor_offsets_and_termination_are_validated() {
+        let minimum = size_of::<STORAGE_DEVICE_DESCRIPTOR>();
+        let mut bytes = vec![0u8; minimum + 7];
+        let length = bytes.len() as u32;
+        let size_offset = offset_of!(STORAGE_DEVICE_DESCRIPTOR, Size);
+        bytes[size_offset..size_offset + 4].copy_from_slice(&length.to_le_bytes());
+        let serial_offset = offset_of!(STORAGE_DEVICE_DESCRIPTOR, SerialNumberOffset);
+        bytes[serial_offset..serial_offset + 4].copy_from_slice(&(minimum as u32).to_le_bytes());
+        let bus_offset = offset_of!(STORAGE_DEVICE_DESCRIPTOR, BusType);
+        bytes[bus_offset..bus_offset + 4].copy_from_slice(&BusTypeUsb.to_le_bytes());
+        bytes[minimum..].copy_from_slice(b"SAMPLE\0");
+        assert_eq!(
+            parse_descriptor(&bytes).unwrap(),
+            ("SAMPLE".into(), BusTypeUsb)
+        );
+        *bytes.last_mut().unwrap() = b'X';
+        assert!(parse_descriptor(&bytes).is_err());
+        bytes[serial_offset..serial_offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_descriptor(&bytes).is_err());
+        assert!(parse_descriptor(&bytes[..minimum - 1]).is_err());
+    }
     #[test]
     fn malformed_extent_buffers_are_rejected() {
         assert!(parse_extents(&[]).is_err());

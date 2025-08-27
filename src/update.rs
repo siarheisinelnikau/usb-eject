@@ -174,6 +174,47 @@ pub fn verify_pe_x64(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn transfer(
+    reader: &mut impl Read,
+    output: &mut impl Write,
+    expected_size: u64,
+    cancel: &AtomicBool,
+    progress: impl Fn(u64, u64),
+) -> Result<(), String> {
+    if expected_size == 0 || expected_size > MAX_EXE {
+        return Err("Invalid download size".into());
+    }
+    let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0;
+    let mut last_percent = 101;
+    loop {
+        if cancel.load(Ordering::Acquire) {
+            return Err("Update download cancelled".into());
+        }
+        let n = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > expected_size {
+            return Err("Download is larger than declared".into());
+        }
+        output.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+        let percent = total * 100 / expected_size;
+        if percent != last_percent {
+            progress(total, expected_size);
+            last_percent = percent;
+        }
+    }
+    if cancel.load(Ordering::Acquire) {
+        return Err("Update download cancelled".into());
+    }
+    if total != expected_size {
+        return Err("Download is incomplete".into());
+    }
+    Ok(())
+}
+
 /// Only called after the application's Download and install action.
 pub fn download(
     available: &Available,
@@ -207,33 +248,15 @@ pub fn download(
             .create_new(true)
             .open(&path)
             .map_err(|e| e.to_string())?;
-        let mut buffer = [0u8; 64 * 1024];
-        let mut total = 0;
-        let mut last_percent = 101;
-        loop {
-            if cancel.load(Ordering::Acquire) {
-                return Err("Update download cancelled".into());
-            }
-            let n = reader.read(&mut buffer).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            total += n as u64;
-            if total > available.executable.size || total > MAX_EXE {
-                return Err("Download is larger than declared".into());
-            }
-            file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
-            let percent = total * 100 / available.executable.size;
-            if percent != last_percent {
-                progress(total, available.executable.size);
-                last_percent = percent;
-            }
-        }
+        transfer(
+            &mut reader,
+            &mut file,
+            available.executable.size,
+            cancel,
+            progress,
+        )?;
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
-        if total != available.executable.size {
-            return Err("Download is incomplete".into());
-        }
         if hash_file(&path)? != expected {
             return Err("Checksum verification failed; installation was not changed".into());
         }
@@ -250,6 +273,55 @@ pub fn download(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transfer_rejects_truncation_oversize_cancellation_and_io_failure() {
+        use std::io::Cursor;
+        let flag = AtomicBool::new(false);
+        let mut output = Vec::new();
+        assert!(
+            transfer(&mut Cursor::new(b"abc"), &mut output, 4, &flag, |_, _| {})
+                .unwrap_err()
+                .contains("incomplete")
+        );
+        output.clear();
+        assert!(
+            transfer(&mut Cursor::new(b"abcde"), &mut output, 4, &flag, |_, _| {})
+                .unwrap_err()
+                .contains("larger")
+        );
+        assert!(output.is_empty());
+        flag.store(true, Ordering::Release);
+        assert!(
+            transfer(&mut Cursor::new(b"abcd"), &mut output, 4, &flag, |_, _| {})
+                .unwrap_err()
+                .contains("cancelled")
+        );
+        assert!(output.is_empty());
+        flag.store(false, Ordering::Release);
+        struct Failing;
+        impl Read for Failing {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "Fixture reset",
+                ))
+            }
+        }
+        assert!(
+            transfer(&mut Failing, &mut output, 4, &flag, |_, _| {})
+                .unwrap_err()
+                .contains("Fixture reset")
+        );
+        transfer(
+            &mut Cursor::new(b"abcd"),
+            &mut output,
+            4,
+            &flag,
+            |done, total| assert_eq!((done, total), (4, 4)),
+        )
+        .unwrap();
+        assert_eq!(output, b"abcd");
+    }
     fn release(version: &str) -> Release {
         let name = format!("UsbEject-v{version}.exe");
         Release {
