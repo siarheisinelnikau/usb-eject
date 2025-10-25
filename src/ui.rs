@@ -267,6 +267,14 @@ impl App {
             self.settings_ready && !self.saving && !self.installing && self.selected().is_some(),
         );
         self.enabled(
+            ALIAS,
+            self.settings_ready && !self.saving && !self.installing && self.selected().is_some(),
+        );
+        self.enabled(
+            FILE_PATH,
+            !self.disk_busy && !self.installing && current && self.selected().is_some(),
+        );
+        self.enabled(
             STARTUP,
             self.settings_ready && !self.saving && !self.installing,
         );
@@ -510,11 +518,14 @@ impl App {
                             self.settings_ready = true;
                             if self.settings.check_updates_on_startup {
                                 self.check_updates();
+                            } else {
+                                self.text(204, "Automatic startup checks are disabled. Manual checking remains available.");
                             }
                         }
                         Err(error) => {
                             self.settings.check_updates_on_startup = false;
                             self.status(&format!("{error}. Settings editing and startup update checks are disabled for this session."));
+                            self.text(204, "Startup checks are disabled because settings could not be loaded. Manual checking remains available.");
                         }
                     }
                     unsafe {
@@ -580,9 +591,18 @@ impl App {
                     self.saving = false;
                     match result {
                         Ok(()) => {
+                            let aliases_changed = self.settings.aliases != value.aliases;
                             self.settings = value;
-                            self.populate(self.devices.clone());
-                            self.status("Settings saved. Display labels only affect UsbEject; volume labels are unchanged.");
+                            if aliases_changed {
+                                self.populate(self.devices.clone());
+                                self.status(
+                                    "Display label saved. Filesystem volume labels are unchanged.",
+                                );
+                            } else if self.settings.check_updates_on_startup {
+                                self.status("Startup update checks enabled. The setting applies at the next launch.");
+                            } else {
+                                self.status("Startup update checks disabled. Manual checking remains available.");
+                            }
                         }
                         Err(error) => self.status(&error),
                     }
@@ -750,11 +770,13 @@ impl App {
         let height = rect.bottom * 96 / dpi as i32;
         let left = 310;
         let right = width - left - 48;
-        let body = (height - 410).max(190);
+        let body = (height - 440).max(190);
         let y = 60 + body;
         let positions = [
             (200, 18, 14, width - 36, 34),
+            (208, 18, 39, left, 20),
             (LIST, 18, 60, left, body),
+            (209, left + 30, 39, right, 20),
             (201, left + 30, 60, right, body),
             (REFRESH, 18, y + 10, 100, 30),
             (EJECT, 128, y + 10, 150, 30),
@@ -766,12 +788,14 @@ impl App {
             (206, 18, y + 87, 135, 24),
             (FILE_PATH, 155, y + 83, width - 300, 28),
             (INSPECT, width - 132, y + 83, 114, 29),
-            (202, 18, y + 122, width - 36, 88),
-            (207, 18, y + 221, width - 36, 24),
-            (STARTUP, 18, y + 249, 325, 26),
-            (CHECK, width - 350, y + 246, 155, 30),
-            (INSTALL, width - 185, y + 246, 167, 30),
-            (204, 18, y + 282, width - 36, 47),
+            (210, 18, y + 122, width - 36, 20),
+            (202, 18, y + 144, width - 36, 76),
+            (207, 18, y + 235, width - 36, 24),
+            (STARTUP, 18, y + 263, 325, 26),
+            (CHECK, width - 350, y + 260, 155, 30),
+            (INSTALL, width - 185, y + 260, 167, 30),
+            (211, 18, y + 297, width - 36, 20),
+            (204, 18, y + 319, width - 36, 47),
         ];
         for (id, x, y, w, h) in positions {
             unsafe {
@@ -1058,10 +1082,22 @@ pub fn run() {
             SS_LEFT,
         );
         add(
+            208,
+            "STATIC",
+            "External physical drives",
+            SS_LEFT | WS_GROUP,
+        );
+        add(
             LIST,
             "LISTBOX",
             "",
             WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | LBS_NOTIFY as u32 | LBS_NOINTEGRALHEIGHT as u32,
+        );
+        add(
+            209,
+            "STATIC",
+            "Selected drive and volumes",
+            SS_LEFT | WS_GROUP,
         );
         add(
             201,
@@ -1077,30 +1113,33 @@ pub fn run() {
             (REFRESH, "Refresh"),
             (EJECT, "Review ejection"),
             (CANCEL, "Cancel"),
-            (SAVE_ALIAS, "Save label"),
-            (INSPECT, "Inspect file"),
-            (CHECK, "Check for updates"),
-            (INSTALL, "Download and install"),
         ] {
             add(id, "BUTTON", text, WS_TABSTOP | BS_PUSHBUTTON as u32);
         }
+        add(203, "STATIC", "Loading…", SS_LEFT);
+        add(205, "STATIC", "Display &label:", SS_LEFT | WS_GROUP);
         add(ALIAS, "EDIT", "", WS_TABSTOP | ES_AUTOHSCROLL as u32);
+        add(
+            SAVE_ALIAS,
+            "BUTTON",
+            "Save label",
+            WS_TABSTOP | BS_PUSHBUTTON as u32,
+        );
+        add(206, "STATIC", "File in use (&path):", SS_LEFT | WS_GROUP);
         add(FILE_PATH, "EDIT", "", WS_TABSTOP | ES_AUTOHSCROLL as u32);
+        add(
+            INSPECT,
+            "BUTTON",
+            "Inspect file",
+            WS_TABSTOP | BS_PUSHBUTTON as u32,
+        );
+        add(210, "STATIC", "Operation status", SS_LEFT | WS_GROUP);
         add(
             202,
             "EDIT",
             "Save your work before ejection. Review the selected device, then confirm. Closing this window keeps UsbEject in the tray; choose Quit from its menu to exit.",
             WS_TABSTOP | WS_VSCROLL | ES_MULTILINE as u32 | ES_READONLY as u32,
         );
-        add(203, "STATIC", "Loading…", SS_LEFT);
-        add(
-            204,
-            "EDIT",
-            "Startup checks are enabled by default. The planned repository may not be published yet.",
-            WS_TABSTOP | WS_VSCROLL | ES_MULTILINE as u32 | ES_READONLY as u32,
-        );
-        add(205, "STATIC", "Display label:", SS_LEFT);
-        add(206, "STATIC", "File in use (path):", SS_LEFT);
         add(
             207,
             "STATIC",
@@ -1115,6 +1154,25 @@ pub fn run() {
             "BUTTON",
             "Check for updates on startup",
             WS_TABSTOP | BS_AUTOCHECKBOX as u32,
+        );
+        add(
+            CHECK,
+            "BUTTON",
+            "Check for updates",
+            WS_TABSTOP | BS_PUSHBUTTON as u32,
+        );
+        add(
+            INSTALL,
+            "BUTTON",
+            "Download and install",
+            WS_TABSTOP | BS_PUSHBUTTON as u32,
+        );
+        add(211, "STATIC", "Update status", SS_LEFT | WS_GROUP);
+        add(
+            204,
+            "EDIT",
+            "Loading update preferences…",
+            WS_TABSTOP | WS_VSCROLL | ES_MULTILINE as u32 | ES_READONLY as u32,
         );
         let generation = DEVICE_EPOCH.with(Arc::clone);
         let disk_cancel = Arc::new(AtomicBool::new(false));
