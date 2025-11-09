@@ -4,6 +4,10 @@
 mod icon;
 #[cfg(windows)]
 mod ui;
+#[cfg(windows)]
+mod ui_capture;
+#[cfg(windows)]
+mod ui_style;
 
 fn main() {
     #[cfg(windows)]
