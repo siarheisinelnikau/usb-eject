@@ -1,6 +1,6 @@
 # Deferred manual validation
 
-All items below are pending. Use disposable test drives and synthetic files, with backups, on an interactive Windows session. Do not run these in unattended code-only verification. Record Windows version, executable hash, device/bridge model, filesystem and results.
+The native client screenshots, bounded idle/hidden diagnostics and fixture tests are recorded in VALIDATION.md. Physical tray clicks, user keyboard traversal, real hardware and update installation below remain pending; Computer Use was explicitly deferred for the redesign. Use disposable drives and synthetic files with backups for later hardware checks. Record Windows version, executable hash, device/bridge model, filesystem and results.
 
 ## Native UI and tray
 
@@ -8,7 +8,7 @@ All items below are pending. Use disposable test drives and synthetic files, wit
 - Close X, reopen by a single tray click and by Open. Repeat when minimized/hidden; verify foreground behavior and that Quit removes the icon/process.
 - Launch twice and verify the same PID/window is restored. Restart Explorer and verify the tray icon returns. Test the documented close behavior when tray creation fails.
 - Measure release-build CPU at idle visible and hidden, plus refresh latency and window responsiveness during slow device/network calls. No runtime performance claim has been measured yet.
-- Capture real application and Settings / Updates screenshots for README.
+- Review the application-generated panel and Settings PNGs in README. Capture OS chrome/tray evidence later only if it adds useful coverage beyond these actual client screenshots.
 
 ## Device discovery and identity
 
@@ -16,7 +16,7 @@ All items below are pending. Use disposable test drives and synthetic files, wit
 - Verify letters, labels, free/capacity values and serial display against Windows. Confirm physical capacity can be unknown without elevation.
 - Verify internal SATA/NVMe disks and a USB-hosted Windows system disk cannot be selected for ejection.
 - Confirm shared-parent multi-LUN devices and spanned volumes are blocked; confirm no parent hub/controller or sibling device is ejected.
-- Test unplug/replug after Review, during discovery, while the tray menu is open and immediately before confirmation. Reused disk numbers, changing volume layouts and changed parent identities must not authorize the old selection.
+- Test unplug/replug after selection, during discovery, while the tray menu is open and immediately before Safely eject. Reused disk numbers, changing volume layouts and changed parent identities must not authorize the old selection. A newly discovered device must not be selected automatically.
 - Test disconnect during a pending Windows request. Confirm final messages describe the Windows result accurately.
 
 ## Ejection and diagnostics

@@ -2,7 +2,7 @@
 
 No repository, tag or release is published by the current task. The planned canonical repository is `siarheisinelnikau/usb-eject`. Do not present it as available until it exists.
 
-1. Complete and record the applicable [manual checks](MANUAL_TESTS.md). Add real main-view and settings screenshots to README. Confirm supported Windows versions and device cases from results.
+1. Complete and record the applicable [manual checks](MANUAL_TESTS.md). Refresh README's real application-generated panel and settings screenshots when the UI changes; keep fixture captions accurate. Confirm supported Windows versions and device cases from results. Static client screenshots do not prove physical tray behavior or hardware ejection.
 2. Update `Cargo.toml`, regenerate `Cargo.lock` if needed and write readable English release notes from verified changes since the preceding relevant release. For the first release, describe initial capabilities and their actual validation limits.
 3. Run `./scripts/verify.ps1` and `./scripts/package.ps1`. Inspect the executable's version resources and the matching SHA-256 entry. Both scripts are noninteractive and do not launch the application.
 4. Review `dist/UsbEject-vVERSION.exe`, `SHA256SUMS`, `LICENSE`, `THIRD-PARTY-NOTICES.txt` and `build-info.json`. Include licensing notices in distribution. The updater currently supports one x64 portable EXE only; keep the filename free of an architecture suffix while there is only one architecture variant.
