@@ -2,7 +2,7 @@
 use crate::ui_capture as capture;
 use crate::ui_style::{self as style, ACCENT, INK, LINE, MUTED, SURFACE, TINT, Theme, WHITE};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     mem::{size_of, zeroed},
     ptr::{null, null_mut},
     sync::{
@@ -37,6 +37,7 @@ use windows_sys::Win32::{
 const WAKE: u32 = WM_APP + 1;
 const TRAY: u32 = WM_APP + 2;
 const RESTORE: u32 = WM_APP + 3;
+const REDRAW: u32 = WM_APP + 4;
 const RESCAN_TIMER: usize = 1;
 const CLASS: &str = "UsbEject.NativeWindow.v1";
 const LIST: u16 = 101;
@@ -220,11 +221,13 @@ struct App {
     diagnostic_samples: Vec<capture::Sample>,
     diagnostic_failed: bool,
     paint_events: Vec<capture::PaintEvent>,
+    draw_events: Vec<capture::DrawEvent>,
 }
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
     static DEVICE_EPOCH: Arc<AtomicU64> = Arc::new(AtomicU64::new(1));
+    static NATIVE_BACKDROPS: Cell<u64> = const { Cell::new(0) };
 }
 
 impl App {
@@ -253,7 +256,7 @@ impl App {
             EnableWindow(self.control(id), enabled as i32);
         }
     }
-    fn status(&self, text: &str) {
+    fn status(&mut self, text: &str) {
         let summary = if text.chars().count() <= 150 {
             text.to_owned()
         } else {
@@ -275,6 +278,10 @@ impl App {
         };
         self.text(202, &summary);
         self.text(215, text);
+        if self.devices.is_empty() {
+            self.resize_panel();
+            self.layout(self.hwnd);
+        }
     }
     fn selected(&self) -> Option<&Device> {
         let index = unsafe { SendMessageW(self.control(LIST), LB_GETCURSEL, 0, 0) };
@@ -458,6 +465,8 @@ impl App {
             self.refresh_pending = false;
             self.disk_cancel.store(false, Ordering::Release);
             self.text(203, "Scanning…");
+            self.text(213, "Looking for drives…");
+            self.text(214, "Windows is checking connected storage.");
             self.update_buttons();
         } else {
             self.status("Storage worker is unavailable. Restart UsbEject.");
@@ -623,6 +632,8 @@ impl App {
                 }
                 Event::Scanned(epoch, result) => {
                     self.disk_busy = false;
+                    self.text(213, "No external drives");
+                    self.text(214, "Connect a USB drive to see it here.");
                     if epoch == self.generation.load(Ordering::Acquire) {
                         self.snapshot_generation = epoch;
                         match result {
@@ -781,7 +792,7 @@ impl App {
         if screen == "error" {
             self.status("Windows could not remove this drive. Close files and apps using it, then try again. Open Details to inspect a busy file.");
         } else if self.devices.is_empty() {
-            self.status("Only supported external storage appears here.");
+            self.status("");
         } else {
             self.status("Save open files before ejecting this drive and all its volumes.");
         }
@@ -800,6 +811,7 @@ impl App {
             self.hwnd
         };
         if matches!(step, 5 | 10 | 12 | 17 | 19 | 24) {
+            self.metrics.native_backdrops = NATIVE_BACKDROPS.with(Cell::get);
             self.diagnostic_samples
                 .push(capture::Sample::new(step, self.metrics));
         }
@@ -812,6 +824,7 @@ impl App {
             self.populate(capture::sample_devices());
         }
         if step == 17 {
+            capture::position_measurement(target);
             unsafe {
                 ShowWindow(target, SW_SHOWNOACTIVATE);
             }
@@ -826,6 +839,7 @@ impl App {
                     &options.output,
                     &self.diagnostic_samples,
                     &self.paint_events,
+                    &self.draw_events,
                 )
             {
                 eprintln!("{error}");
@@ -1001,7 +1015,11 @@ impl App {
         }
     }
     fn panel_client_height(&self) -> i32 {
-        112 + self.panel_content_height() + if self.devices.is_empty() { 152 } else { 200 }
+        if self.devices.is_empty() {
+            344 + if self.input(202).is_empty() { 0 } else { 64 }
+        } else {
+            112 + self.panel_content_height() + 200
+        }
     }
     fn resize_panel(&self) {
         let dpi = self.window_dpi(self.hwnd);
@@ -1109,18 +1127,29 @@ impl App {
             let bottom = 112 + self.panel_content_height();
             let status_y = bottom + if self.devices.is_empty() { 14 } else { 62 };
             vec![
-                (200, 24, 18, width - 145, 34),
+                (200, 24, 18, width - 190, 34),
                 (216, 24, 55, width - 48, 22),
-                (REFRESH, width - 108, 23, 84, 34),
+                (REFRESH, width - 152, 20, 84, 34),
+                (HIDE, width - 56, 20, 32, 34),
                 (208, 24, 92, 200, 20),
                 (203, width - 119, 92, 95, 20),
                 (LIST, 20, 112, width - 40, self.panel_content_height()),
-                (213, 24, 211, width - 48, 28),
-                (214, 32, 244, width - 64, 38),
+                (213, 24, 188, width - 48, 28),
+                (214, 32, 222, width - 64, 38),
                 (DETAILS, 24, bottom + 14, 112, 36),
                 (CANCEL_MAIN, 24, bottom + 14, 112, 36),
                 (EJECT, 146, bottom + 14, width - 170, 36),
-                (202, 24, status_y, width - 48, 64),
+                (
+                    202,
+                    24,
+                    if self.devices.is_empty() {
+                        274
+                    } else {
+                        status_y
+                    },
+                    width - 48,
+                    56,
+                ),
                 (SETTINGS, 24, height - 56, 112, 34),
                 (217, 147, height - 49, width - 245, 22),
                 (MORE, width - 92, height - 56, 68, 34),
@@ -1158,7 +1187,7 @@ impl App {
         for (id, x, y, w, h) in positions {
             let control = self.control(id);
             unsafe {
-                MoveWindow(control, theme.s(x), theme.s(y), theme.s(w), theme.s(h), 1);
+                MoveWindow(control, theme.s(x), theme.s(y), theme.s(w), theme.s(h), 0);
             }
         }
         for (id, control) in &self.controls {
@@ -1172,7 +1201,7 @@ impl App {
                 _ => theme.normal,
             };
             unsafe {
-                SendMessageW(*control, WM_SETFONT, font as usize, 1);
+                SendMessageW(*control, WM_SETFONT, font as usize, 0);
             }
         }
         if index == 0 {
@@ -1186,6 +1215,21 @@ impl App {
                 unsafe {
                     ShowWindow(self.control(id), if empty { SW_SHOW } else { SW_HIDE });
                 }
+            }
+            for id in [208, 203] {
+                unsafe {
+                    ShowWindow(self.control(id), if empty { SW_HIDE } else { SW_SHOW });
+                }
+            }
+            unsafe {
+                ShowWindow(
+                    self.control(202),
+                    if !empty || !self.input(202).is_empty() {
+                        SW_SHOW
+                    } else {
+                        SW_HIDE
+                    },
+                );
             }
             unsafe {
                 ShowWindow(
@@ -1215,7 +1259,14 @@ impl App {
             }
         }
         unsafe {
-            InvalidateRect(hwnd, null(), 1);
+            // Queue one coherent parent/child redraw after mutable UI state is
+            // released. Native control callbacks must not paint with defaults.
+            RedrawWindow(
+                hwnd,
+                null(),
+                null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+            );
         }
     }
     fn paint(&mut self, hwnd: HWND, dc: HDC, printing: bool) {
@@ -1248,13 +1299,13 @@ impl App {
             style::separator(dc, theme.s(84), rect.right);
             style::separator(dc, rect.bottom - theme.s(72), rect.right);
             if self.devices.is_empty() {
-                let badge = theme.rect(width / 2 - 29, 134, 58, 58);
+                let badge = theme.rect(width / 2 - 29, 112, 58, 58);
                 style::rounded(dc, badge, theme.s(20), TINT, TINT);
                 unsafe {
                     DrawIconEx(
                         dc,
                         theme.s(width / 2 - 16),
-                        theme.s(147),
+                        theme.s(125),
                         self.tray_icon,
                         theme.s(32),
                         theme.s(32),
@@ -1270,14 +1321,23 @@ impl App {
     }
     fn draw_item(&mut self, item: &DRAWITEMSTRUCT) {
         self.metrics.draws += 1;
+        if self.diagnostic.is_some() && self.draw_events.len() < 64 {
+            self.draw_events.push(capture::DrawEvent {
+                step: self.diagnostic_step,
+                control: item.CtlID,
+                action: item.itemAction,
+                state: item.itemState,
+            });
+        }
         let theme = &self.themes[self.theme_index(unsafe { GetParent(item.hwndItem) })];
         if item.CtlID != LIST as u32 {
             let id = item.CtlID as u16;
-            theme.button(
-                item,
-                id == EJECT || id == CHECK || id == INSTALL,
-                &self.input(id),
-            );
+            let label = if id == HIDE {
+                "×".to_owned()
+            } else {
+                self.input(id)
+            };
+            theme.button(item, id == EJECT || id == CHECK || id == INSTALL, &label);
             return;
         }
         if item.itemID == u32::MAX {
@@ -1395,6 +1455,29 @@ fn copy_wide(target: &mut [u16], text: &str) {
     target[target.len() - 1] = 0;
 }
 
+// Windows sends these messages synchronously from ShowWindow, EnableWindow,
+// font changes and native backdrop painting. They must work while APP is
+// already borrowed, and before the controller has finished initialization.
+fn control_colors(dc: HDC, control: HWND) -> LRESULT {
+    let id = unsafe { GetDlgCtrlID(control) };
+    unsafe {
+        SetTextColor(
+            dc,
+            if matches!(
+                id,
+                203 | 207 | 208 | 209 | 210 | 211 | 214 | 216 | 217 | 220
+            ) {
+                MUTED
+            } else {
+                INK
+            },
+        );
+        SetBkColor(dc, WHITE);
+        SetBkMode(dc, OPAQUE as i32);
+        GetStockObject(WHITE_BRUSH) as LRESULT
+    }
+}
+
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -1408,6 +1491,60 @@ unsafe extern "system" fn window_proc(
         }
     }
     let role = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
+    if matches!(
+        message,
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN
+    ) {
+        return control_colors(wparam as HDC, lparam as HWND);
+    }
+    if message == WM_ERASEBKGND {
+        let mut bounds = RECT::default();
+        unsafe {
+            GetClientRect(hwnd, &mut bounds);
+            FillRect(wparam as HDC, &bounds, GetStockObject(WHITE_BRUSH));
+        }
+        return 1;
+    }
+    if message == REDRAW {
+        unsafe {
+            RedrawWindow(
+                hwnd,
+                null(),
+                null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+            );
+        }
+        return 0;
+    }
+    if message == WM_PRINTCLIENT && role == 2 {
+        // A themed native checkbox asks its parent to paint only the flat
+        // backdrop beneath it. Service that local request directly, including
+        // reentrant calls; it is not a reconstruction of the Settings scene.
+        let mut clip = RECT::default();
+        let mut bounds = RECT::default();
+        let mut origin = POINT::default();
+        unsafe {
+            let checkbox = GetDlgItem(hwnd, STARTUP as i32);
+            GetClipBox(wparam as HDC, &mut clip);
+            GetClientRect(checkbox, &mut bounds);
+            MapWindowPoints(checkbox, hwnd, &mut origin, 1);
+        }
+        if clip.right > clip.left
+            && clip.bottom > clip.top
+            && clip.left >= origin.x
+            && clip.top >= origin.y
+            && clip.right <= origin.x + bounds.right
+            && clip.bottom <= origin.y + bounds.bottom
+        {
+            if unsafe { IsWindowVisible(hwnd) } != 0 {
+                unsafe {
+                    FillRect(wparam as HDC, &clip, GetStockObject(WHITE_BRUSH));
+                }
+                NATIVE_BACKDROPS.with(|count| count.set(count.get() + 1));
+            }
+            return 0;
+        }
+    }
     if message == WM_DESTROY {
         if role == 1 {
             unsafe {
@@ -1431,6 +1568,12 @@ unsafe extern "system" fn window_proc(
     }
     let handled = APP.with(|state| {
         let Ok(mut state) = state.try_borrow_mut() else {
+            if message == WM_DRAWITEM {
+                unsafe {
+                    PostMessageW(hwnd, REDRAW, 0, 0);
+                }
+                return Some(1);
+            }
             return None;
         };
         let app = state.as_mut()?;
@@ -1519,25 +1662,6 @@ unsafe extern "system" fn window_proc(
                     return Some(1);
                 }
                 return None;
-            }
-            WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN => {
-                let dc = wparam as HDC;
-                let id = unsafe { GetDlgCtrlID(lparam as HWND) };
-                unsafe {
-                    SetTextColor(
-                        dc,
-                        if matches!(
-                            id,
-                            203 | 207 | 208 | 209 | 210 | 211 | 214 | 216 | 217 | 220
-                        ) {
-                            MUTED
-                        } else {
-                            INK
-                        },
-                    );
-                    SetBkColor(dc, WHITE);
-                }
-                return Some(app.themes[app.theme_index(hwnd)].white as isize);
             }
             TRAY => match lparam as u32 {
                 WM_LBUTTONUP => app.restore(),
@@ -1662,7 +1786,7 @@ pub fn run() {
             hInstance: instance,
             hIcon: icon,
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-            hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
+            hbrBackground: GetStockObject(WHITE_BRUSH),
             lpszClassName: name.as_ptr(),
             ..zeroed()
         };
@@ -1678,7 +1802,11 @@ pub fn run() {
                 WS_EX_CONTROLPARENT | if tool { WS_EX_TOOLWINDOW } else { 0 },
                 name.as_ptr(),
                 wide(title).as_ptr(),
-                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
+                if tool {
+                    WS_POPUP | WS_BORDER | WS_SYSMENU | WS_CLIPCHILDREN
+                } else {
+                    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
+                },
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 w,
@@ -1708,6 +1836,7 @@ pub fn run() {
         label(hwnd, &mut controls, 200, "UsbEject");
         label(hwnd, &mut controls, 216, "External drives, safely removed.");
         button(hwnd, &mut controls, REFRESH, "Refresh");
+        button(hwnd, &mut controls, HIDE, "Hide to tray");
         label(hwnd, &mut controls, 208, "EXTERNAL DRIVES");
         label(hwnd, &mut controls, 203, "Scanning…");
         child(
@@ -1742,12 +1871,7 @@ pub fn run() {
         button(hwnd, &mut controls, DETAILS, "Details");
         button(hwnd, &mut controls, CANCEL_MAIN, "Cancel");
         button(hwnd, &mut controls, EJECT, "Safely eject");
-        label(
-            hwnd,
-            &mut controls,
-            202,
-            "Only supported external storage appears here.",
-        );
+        label(hwnd, &mut controls, 202, "");
         button(hwnd, &mut controls, SETTINGS, "Settings");
         label(hwnd, &mut controls, 217, "Runs in your tray");
         button(hwnd, &mut controls, MORE, "More");
@@ -1917,6 +2041,7 @@ pub fn run() {
             diagnostic_samples: vec![],
             diagnostic_failed: false,
             paint_events: vec![],
+            draw_events: vec![],
         };
         if app.diagnostic.is_some() {
             app.prepare_diagnostic();
@@ -1937,6 +2062,7 @@ pub fn run() {
                 } else {
                     hwnd
                 };
+                capture::position_measurement(target);
                 ShowWindow(target, SW_SHOWNOACTIVATE);
                 APP.with(|s| s.borrow_mut().as_mut().unwrap().layout(target));
                 SetTimer(hwnd, capture::TIMER, 1000, None);
@@ -1959,7 +2085,17 @@ pub fn run() {
                 );
                 ShowWindow(target, SW_SHOWNOACTIVATE);
                 APP.with(|s| s.borrow_mut().as_mut().unwrap().layout(target));
-                let result = capture::save_client(target, &options.output);
+                let under_borrow = APP.with(|state| {
+                    let state = state.borrow();
+                    capture::palette_probe(target, &state.as_ref().unwrap().controls)
+                });
+                let controls = APP.with(|state| state.borrow().as_ref().unwrap().controls.clone());
+                let outside_borrow = capture::palette_probe(target, &controls);
+                let result = capture::save_client(
+                    target,
+                    &options.output,
+                    serde_json::json!({"under_state_borrow":under_borrow,"outside_state_borrow":outside_borrow}),
+                );
                 DestroyWindow(hwnd);
                 APP.with(|s| {
                     s.borrow_mut().take();

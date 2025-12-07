@@ -50,7 +50,7 @@ impl Theme {
             dpi,
             normal: font(15, 400),
             title: font(25, 600),
-            heading: font(16, 600),
+            heading: font(16, 500),
             small: font(13, 400),
             white: unsafe { CreateSolidBrush(WHITE) },
         }
@@ -113,7 +113,7 @@ impl Theme {
         );
         text_at(
             item.hDC,
-            self.heading,
+            self.normal,
             text,
             item.rcItem,
             foreground,
