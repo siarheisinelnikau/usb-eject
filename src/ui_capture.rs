@@ -71,6 +71,7 @@ pub struct Metrics {
     pub layouts: [u64; 3],
     pub draws: u64,
     pub prints: [u64; 3],
+    pub native_backdrops: u64,
 }
 #[derive(Serialize)]
 pub struct PaintEvent {
@@ -78,6 +79,13 @@ pub struct PaintEvent {
     pub window: usize,
     pub printing: bool,
     pub rect: [i32; 4],
+}
+#[derive(Serialize)]
+pub struct DrawEvent {
+    pub step: u32,
+    pub control: u32,
+    pub action: u32,
+    pub state: u32,
 }
 #[derive(Serialize)]
 pub struct Sample {
@@ -119,6 +127,7 @@ pub fn write_measurement(
     path: &Path,
     samples: &[Sample],
     events: &[PaintEvent],
+    draws: &[DrawEvent],
 ) -> Result<(), String> {
     let phases:Vec<_>=samples.chunks_exact(2).enumerate().map(|(index,pair)|{
         let a=&pair[0];let b=&pair[1];let seconds=(b.wall_ms-a.wall_ms)as f64/1000.;
@@ -127,15 +136,83 @@ pub fn write_measurement(
         let layout:u64=b.metrics.layouts.iter().zip(a.metrics.layouts).map(|(b,a)|b-a).sum();
         let prints:u64=b.metrics.prints.iter().zip(a.metrics.prints).map(|(b,a)|b-a).sum();
         let logical=std::thread::available_parallelism().map(|n|n.get()).unwrap_or(1);
-        serde_json::json!({"state":(["visible_idle","hidden_with_data_update","restored_idle"][index]),"seconds":seconds,"cpu_seconds":cpu,"cpu_percent_one_core":cpu/seconds*100.,"cpu_percent_available_processors":cpu/seconds*100./logical as f64,"logical_processors_available":logical,"paints":paint,"layouts":layout,"owner_draws":b.metrics.draws-a.metrics.draws,"print_client_requests":prints})
+        serde_json::json!({"state":(["visible_idle","hidden_with_data_update","restored_idle"][index]),"seconds":seconds,"cpu_seconds":cpu,"cpu_percent_one_core":cpu/seconds*100.,"cpu_percent_available_processors":cpu/seconds*100./logical as f64,"logical_processors_available":logical,"paints":paint,"layouts":layout,"owner_draws":b.metrics.draws-a.metrics.draws,"print_client_requests":prints,"native_checkbox_backdrops":b.metrics.native_backdrops-a.metrics.native_backdrops})
     }).collect();
-    let report = serde_json::json!({"executable":std::env::current_exe().map_err(|e|e.to_string())?,"pid":std::process::id(),"backend":"Win32 native controls + CPU GDI; OS desktop composition remains enabled","fixture":"Two synthetic external drives; no device discovery/ejection, settings I/O or network","gpu_telemetry":"Not collected","samples":samples,"phases":phases,"paint_events":events});
+    let report = serde_json::json!({"executable":std::env::current_exe().map_err(|e|e.to_string())?,"pid":std::process::id(),"backend":"Win32 native controls + CPU GDI; OS desktop composition remains enabled","fixture":"Two synthetic external drives; no device discovery/ejection, settings I/O or network","gpu_telemetry":"Not collected","samples":samples,"phases":phases,"paint_events":events,"draw_events":draws});
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).map_err(|e| e.to_string())
 }
-pub fn save_client(hwnd: HWND, path: &Path) -> Result<(), String> {
+pub fn position_measurement(hwnd: HWND) {
+    // A newly shown native button beneath a stationary pointer can enter a
+    // hover state. Keep this isolated idle sample away from the current pointer.
+    unsafe {
+        let mut cursor = POINT::default();
+        GetCursorPos(&mut cursor);
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..zeroed()
+        };
+        GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info);
+        let mut bounds = RECT::default();
+        GetWindowRect(hwnd, &mut bounds);
+        let (w, h) = (bounds.right - bounds.left, bounds.bottom - bounds.top);
+        let points = [
+            (info.rcWork.left + 24, info.rcWork.top + 24),
+            (info.rcWork.right - w - 24, info.rcWork.bottom - h - 24),
+            (info.rcWork.right - w - 24, info.rcWork.top + 24),
+            (info.rcWork.left + 24, info.rcWork.bottom - h - 24),
+        ];
+        if let Some((x, y)) = points
+            .into_iter()
+            .find(|(x, y)| cursor.x < *x || cursor.x >= x + w || cursor.y < *y || cursor.y >= y + h)
+        {
+            SetWindowPos(
+                hwnd,
+                null_mut(),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+}
+pub fn palette_probe(parent: HWND, controls: &[(u16, HWND)]) -> serde_json::Value {
+    let mut results = Vec::new();
+    for (id, control) in controls {
+        if unsafe { GetParent(*control) } != parent {
+            continue;
+        }
+        let mut class = [0u16; 32];
+        unsafe {
+            GetClassNameW(*control, class.as_mut_ptr(), class.len() as i32);
+        }
+        let class = usb_eject::windows::from_wide(&class).to_ascii_uppercase();
+        let message = match class.as_str() {
+            "STATIC" => WM_CTLCOLORSTATIC,
+            "EDIT" => WM_CTLCOLOREDIT,
+            "BUTTON" => WM_CTLCOLORBTN,
+            _ => continue,
+        };
+        let dc = unsafe { GetDC(*control) };
+        unsafe {
+            SetBkColor(dc, 0x00ff00ff);
+        }
+        let brush = unsafe { SendMessageW(parent, message, dc as usize, *control as isize) };
+        let background = unsafe { GetBkColor(dc) };
+        unsafe {
+            ReleaseDC(*control, dc);
+        }
+        results.push(
+            serde_json::json!({"control":id,"background":background,"brush_available":brush!=0}),
+        );
+    }
+    serde_json::json!(results)
+}
+pub fn save_client(hwnd: HWND, path: &Path, palette: serde_json::Value) -> Result<(), String> {
     unsafe {
         let mut r = RECT::default();
         GetClientRect(hwnd, &mut r);
@@ -208,7 +285,7 @@ pub fn save_client(hwnd: HWND, path: &Path) -> Result<(), String> {
         writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
         writer.finish().map_err(|e| e.to_string())?;
         usb_eject::settings::replace(&temp, path).map_err(|e| e.to_string())?;
-        fs::write(path.with_extension("capture.json"), serde_json::to_vec_pretty(&serde_json::json!({"client_width":w,"client_height":h,"backend":"Native GDI PrintWindow client capture","fonts":fonts})).unwrap()).map_err(|e|e.to_string())
+        fs::write(path.with_extension("capture.json"), serde_json::to_vec_pretty(&serde_json::json!({"client_width":w,"client_height":h,"native_caption":GetWindowLongPtrW(hwnd,GWL_STYLE)as u32 & WS_CAPTION == WS_CAPTION,"backend":"Native GDI PrintWindow client capture","fonts":fonts,"reentrant_palette":palette})).unwrap()).map_err(|e|e.to_string())
     }
 }
 pub fn sample_devices() -> Vec<Device> {

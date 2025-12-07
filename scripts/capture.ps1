@@ -26,6 +26,10 @@ foreach ($Screen in @('empty', 'sample', 'error', 'settings', 'details')) {
     if (Test-Path -LiteralPath $Path) { throw "Refusing to reuse a previous capture: $Path" }
     Invoke-BoundedDiagnostic @('--capture', $Path, '--screen', $Screen) 12000
     if (-not (Test-Path -LiteralPath $Path)) { throw "Capture was not created: $Path" }
+    $CaptureMetadata = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($Path, 'capture.json')) -Raw | ConvertFrom-Json
+    foreach ($Case in @('under_state_borrow','outside_state_borrow')) {
+        if ($CaptureMetadata.reentrant_palette.$Case | Where-Object { $_.background -ne 16777215 -or -not $_.brush_available }) { throw "Reentrant palette regression: $Screen / $Case" }
+    }
 }
 $ScaledPath = Join-Path $OutputRoot 'sample-150.png'
 Invoke-BoundedDiagnostic @('--capture', $ScaledPath, '--screen', 'sample', '--scale', '150') 12000
@@ -41,6 +45,7 @@ if ($Measure) {
         $Report = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
         foreach ($Phase in $Report.phases) {
             if ($Phase.paints -ne 0 -or $Phase.layouts -ne 0 -or $Phase.owner_draws -ne 0 -or $Phase.print_client_requests -ne 0 -or $Phase.cpu_percent_one_core -gt 5) { throw "Rendering/load gate requires investigation: $ReportPath / $($Phase.state)" }
+            if ($Phase.state -eq 'hidden_with_data_update' -and $Phase.native_checkbox_backdrops -ne 0) { throw "Hidden native control rendering: $ReportPath" }
         }
     }
 }
