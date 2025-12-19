@@ -1,0 +1,146 @@
+{
+  "outside_state_borrow": [
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 200
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 216
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 102
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 208
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 203
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 213
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 214
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 115
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 120
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 103
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 202
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 114
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 217
+    },
+    {
+      "background": 16777215,
+      "brush_available": true,
+      "control": 116
+    }
+  ],
+  "under_state_borrow": [
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 200
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 216
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 102
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 208
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 203
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 213
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 214
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 115
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 120
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 103
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 202
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 114
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 217
+    },
+    {
+      "background": 15790320,
+      "brush_available": true,
+      "control": 116
+    }
+  ]
+}
