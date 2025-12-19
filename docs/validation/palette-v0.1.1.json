@@ -1,0 +1,228 @@
+{
+  "backend": "Native GDI PrintWindow client capture",
+  "client_height": 344,
+  "client_width": 440,
+  "fonts": [
+    {
+      "actual_face": "Segoe UI",
+      "control": 200
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 216
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 102
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 117
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 208
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 203
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 101
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 213
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 214
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 115
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 120
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 103
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 202
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 114
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 217
+    },
+    {
+      "actual_face": "Segoe UI",
+      "control": 116
+    }
+  ],
+  "native_caption": false,
+  "reentrant_palette": {
+    "outside_state_borrow": [
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 200
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 216
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 102
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 117
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 208
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 203
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 213
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 214
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 115
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 120
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 103
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 202
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 114
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 217
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 116
+      }
+    ],
+    "under_state_borrow": [
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 200
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 216
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 102
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 117
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 208
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 203
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 213
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 214
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 115
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 120
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 103
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 202
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 114
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 217
+      },
+      {
+        "background": 16777215,
+        "brush_available": true,
+        "control": 116
+      }
+    ]
+  }
+}

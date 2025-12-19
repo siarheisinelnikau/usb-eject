@@ -1,11 +1,9 @@
 {
-  "date": "2026-10-31",
-  "executable": "UsbEject-v0.1.0.exe",
-  "executableSha256": "900cb98533e9fbf531189cb36ce8a07026027152cb0e1755cf1569b5e2e66942",
-  "processCompletion": "All capture and measurement processes exited successfully",
-  "data": "Synthetic, non-sensitive fixtures; no real device operations or user settings",
   "backend": "Native Win32 controls and CPU GDI; PrintWindow client captures",
-  "source": "Bounded application render-save-exit mode; no Computer Use",
+  "date": "2026-10-31",
+  "processCompletion": "All capture and measurement processes exited successfully",
+  "regression": "Native colors checked during and outside controller-state borrow",
+  "executable": "UsbEject-v0.1.1.exe",
   "screenshots": [
     "drive-details.png",
     "panel-150.png",
@@ -13,5 +11,9 @@
     "panel-error.png",
     "panel-sample.png",
     "settings.png"
-  ]
+  ],
+  "executableSha256": "e77fa49c09bc0a02a1fb39e9465a079633e3fa13fe8f1ca08fac06f8b9477191",
+  "version": "0.1.1",
+  "source": "Bounded application render-save-exit mode; no Computer Use",
+  "data": "Synthetic, non-sensitive fixtures; no real device operations or user settings"
 }

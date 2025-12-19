@@ -1,5 +1,22 @@
 # Local validation record
 
+## v0.1.1 — reported native-control backgrounds
+
+The supplied live 0.1.0 screenshot exposed a gap in the previous static review: PrintWindow repainted controls after the controller borrow had ended, while ordinary Windows callbacks could arrive during that borrow. The color handler then fell through to the default system background. A bounded native probe reproduced **14 gray `#F0F0F0` backgrounds inside the state borrow versus 14 white `#FFFFFF` backgrounds outside it**. This was an application painting defect, not an inferred user theme setting.
+
+The palette/erase handlers now work independently of controller state. Geometry/font updates queue a complete parent-and-child redraw after mutation, and reentrant owner-draw requests are deferred. The panel has a frameless application header with an accessible Hide to tray control; the empty client area is now 440 × 344 logical pixels, without the duplicate count and supporting status. Useful failure notices can still expand the empty panel.
+
+Final v0.1.1 checks:
+
+- Formatting, Clippy with warnings denied and all 17 existing fixture tests passed.
+- Every standard capture checks native control colors both inside and outside the controller borrow. The updated empty panel has 15 probed controls; both cases return white and valid brushes. The other panel/settings/details cases also pass. This regression probe specifically covers the live-callback path that a fresh static capture had missed.
+- All six fresh client PNGs were visually reviewed: empty, selected sample drives, refusal, Settings, Details and 150% scale. Settings reports version 0.1.1. No Computer Use, actual ejection, network update or user-settings write was used.
+- Bounded visible/hidden/restore measurements passed for panel and Settings. Each settled five-second interval added **0 layouts, 0 ordinary paints, 0 owner-draw calls and 0 scene print requests**. Sampled process CPU did not increase at its timer resolution. Hidden windows also performed no native-checkbox backdrop rendering.
+- A native checkbox can ask its parent for just the white backdrop under that control. The trace identified the exact checkbox clip rectangle; this request is now serviced locally without rebuilding Settings and counted separately. Measurement windows are placed away from the current pointer to keep native hover transitions out of idle samples. GPU/presentation telemetry remains unavailable.
+- Release packaging and PE inspection passed; the capture manifest's executable hash matches `UsbEject-v0.1.1.exe`. This is a local preview, not a published release.
+
+Evidence: [0.1.0 native palette baseline](validation/palette-v0.1.0-baseline.json), [0.1.1 native palette](validation/palette-v0.1.1.json), [0.1.1 panel load](validation/panel-load-v0.1.1.json), [0.1.1 Settings load](validation/settings-load-v0.1.1.json), [current screenshot manifest](screenshots/captures.json). Physical tray clicks, keyboard traversal, mixed-monitor behavior and real hardware remain separate manual checks.
+
 ## Tray-panel redesign — 2026-10-31
 
 The current interface uses a compact native tray panel, a separate Settings window and per-drive Details. The primary flow is explicit selection followed by **Safely eject**. No drive is selected automatically after discovery. No real ejection was performed during this work. The final redesign review used no Computer Use.
@@ -22,7 +39,7 @@ Completed against the optimized x64 executable:
 | Settings, hidden with fixture update | 5.002 s | 0 / 0 / 0 / 0 | Not measurable in this sample |
 | Settings, restored idle | 5.009 s | 0 / 0 / 0 / 0 | Not measurable in this sample |
 
-Raw evidence: [panel load](validation/panel-load.json), [Settings load](validation/settings-load.json), and [capture manifest](screenshots/captures.json). The reports identify the exact executable, PID, backend, available processor count and measurement units. Zero sampled CPU deltas reflect the Windows process-time resolution and short intervals, not a promise of zero CPU on every machine.
+Historical 0.1.0 evidence: [panel load](validation/panel-load.json) and [Settings load](validation/settings-load.json). The reports identify the exact executable, PID, backend, available processor count and measurement units. Zero sampled CPU deltas reflect the Windows process-time resolution and short intervals, not a promise of zero CPU on every machine. Current captures are tracked by the manifest linked in the v0.1.1 section above.
 
 The static review and bounded internal hide/restore/rendering checks pass for these fixtures. Physical tray clicks, actual keyboard traversal, foreground activation rules, mixed-monitor DPI behavior, real hardware, slow-driver/network operation and update installation remain unverified. They require later interaction/hardware testing. These limitations do not invalidate the actual saved client screenshots.
 
