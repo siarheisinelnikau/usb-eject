@@ -33,6 +33,9 @@ foreach ($Screen in @('empty', 'sample', 'error', 'settings', 'details')) {
 }
 $ScaledPath = Join-Path $OutputRoot 'sample-150.png'
 Invoke-BoundedDiagnostic @('--capture', $ScaledPath, '--screen', 'sample', '--scale', '150') 12000
+$IconPath = Join-Path $OutputRoot 'tray-icons.png'
+Invoke-BoundedDiagnostic @('--capture', $IconPath, '--screen', 'icons') 12000
+if (-not (Test-Path -LiteralPath $IconPath)) { throw 'Native icon proof was not created' }
 if ($Measure) {
     $MeasurePath = Join-Path $OutputRoot 'rendering-load.json'
     Invoke-BoundedDiagnostic @('--measure', $MeasurePath) 30000
