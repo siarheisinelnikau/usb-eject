@@ -30,7 +30,7 @@ impl Options {
             return Ok(None);
         }
         if first != "--capture" && first != "--measure" {
-            return Err("Use --capture OUTPUT.png [--screen empty|sample|error|settings|details] [--scale 100|150|200], --measure OUTPUT.json, or --background".into());
+            return Err("Use --capture OUTPUT.png [--screen empty|sample|error|settings|details|icons] [--scale 100|150|200], --measure OUTPUT.json, or --background".into());
         }
         let output = PathBuf::from(args.get(1).ok_or("Output path is required")?);
         if !output.is_absolute() {
@@ -57,8 +57,9 @@ impl Options {
         }
         if !matches!(
             result.screen.as_str(),
-            "empty" | "sample" | "error" | "settings" | "details"
+            "empty" | "sample" | "error" | "settings" | "details" | "icons"
         ) || !matches!(result.scale, 100 | 150 | 200)
+            || (result.screen == "icons" && (result.measure || result.scale != 100))
         {
             return Err("Unsupported diagnostic screen or scale".into());
         }
@@ -286,6 +287,201 @@ pub fn save_client(hwnd: HWND, path: &Path, palette: serde_json::Value) -> Resul
         writer.finish().map_err(|e| e.to_string())?;
         usb_eject::settings::replace(&temp, path).map_err(|e| e.to_string())?;
         fs::write(path.with_extension("capture.json"), serde_json::to_vec_pretty(&serde_json::json!({"client_width":w,"client_height":h,"native_caption":GetWindowLongPtrW(hwnd,GWL_STYLE)as u32 & WS_CAPTION == WS_CAPTION,"backend":"Native GDI PrintWindow client capture","fonts":fonts,"reentrant_palette":palette})).unwrap()).map_err(|e|e.to_string())
+    }
+}
+
+fn icon_footprint(icon: HICON) -> Result<serde_json::Value, String> {
+    unsafe {
+        let mut info: ICONINFO = zeroed();
+        if icon.is_null() || GetIconInfo(icon, &mut info) == 0 {
+            return Err("Cannot inspect native icon".into());
+        }
+        let result = (|| {
+            let mut bitmap: BITMAP = zeroed();
+            if GetObjectW(
+                info.hbmColor,
+                size_of::<BITMAP>() as i32,
+                (&mut bitmap as *mut BITMAP).cast(),
+            ) == 0
+            {
+                return Err("Cannot inspect icon bitmap".to_owned());
+            }
+            let (w, h) = (bitmap.bmWidth, bitmap.bmHeight);
+            let mut pixels = vec![0u8; (w * h * 4) as usize];
+            let mut dib: BITMAPINFO = zeroed();
+            dib.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+            dib.bmiHeader.biWidth = w;
+            dib.bmiHeader.biHeight = -h;
+            dib.bmiHeader.biPlanes = 1;
+            dib.bmiHeader.biBitCount = 32;
+            let dc = CreateCompatibleDC(null_mut());
+            let rows = GetDIBits(
+                dc,
+                info.hbmColor,
+                0,
+                h as u32,
+                pixels.as_mut_ptr().cast(),
+                &mut dib,
+                DIB_RGB_COLORS,
+            );
+            DeleteDC(dc);
+            if rows != h {
+                return Err("Cannot read icon alpha".into());
+            }
+            let mut bounds = [w, h, 0, 0];
+            for y in 0..h {
+                for x in 0..w {
+                    if pixels[((y * w + x) * 4 + 3) as usize] >= 128 {
+                        bounds[0] = bounds[0].min(x);
+                        bounds[1] = bounds[1].min(y);
+                        bounds[2] = bounds[2].max(x + 1);
+                        bounds[3] = bounds[3].max(y + 1);
+                    }
+                }
+            }
+            if bounds[2] - bounds[0] < w * 7 / 8 || bounds[3] - bounds[1] < h * 7 / 8 {
+                return Err(format!("Icon artwork is undersized: {w}x{h}, {bounds:?}"));
+            }
+            Ok(serde_json::json!({"width":w,"height":h,"alpha_128_bounds":bounds}))
+        })();
+        DeleteObject(info.hbmColor);
+        DeleteObject(info.hbmMask);
+        result
+    }
+}
+
+/// Native resource proof, not a screenshot of Explorer's notification area.
+#[allow(clippy::manual_dangling_ptr)]
+pub fn save_icons(instance: HINSTANCE, path: &Path) -> Result<(), String> {
+    unsafe {
+        let dc = CreateCompatibleDC(null_mut());
+        let mut info: BITMAPINFO = zeroed();
+        info.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = 400;
+        info.bmiHeader.biHeight = -176;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        let mut pixels = null_mut();
+        let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut pixels, null_mut(), 0);
+        if dc.is_null() || bitmap.is_null() || pixels.is_null() {
+            if !bitmap.is_null() {
+                DeleteObject(bitmap);
+            }
+            if !dc.is_null() {
+                DeleteDC(dc);
+            }
+            return Err("Cannot allocate native icon capture".into());
+        }
+        let previous = SelectObject(dc, bitmap);
+        let result = (|| {
+            let bounds = RECT {
+                left: 0,
+                top: 0,
+                right: 400,
+                bottom: 176,
+            };
+            FillRect(dc, &bounds, GetStockObject(WHITE_BRUSH));
+            let dark = CreateSolidBrush(0x00202020);
+            FillRect(
+                dc,
+                &RECT {
+                    top: 48,
+                    bottom: 112,
+                    ..bounds
+                },
+                dark,
+            );
+            DeleteObject(dark);
+            let theme = crate::ui_style::Theme::new(96);
+            let mut resources = Vec::new();
+            for (column, size) in crate::icon::SIZES.into_iter().enumerate() {
+                let icon = LoadImageW(
+                    instance,
+                    1usize as *const u16,
+                    IMAGE_ICON,
+                    size as i32,
+                    size as i32,
+                    0,
+                );
+                let footprint = icon_footprint(icon);
+                if column < 4 && !icon.is_null() {
+                    let x = column as i32 * 100;
+                    crate::ui_style::text_at(
+                        dc,
+                        theme.normal,
+                        &format!("{size} px"),
+                        RECT {
+                            left: x,
+                            top: 12,
+                            right: x + 100,
+                            bottom: 36,
+                        },
+                        crate::ui_style::INK,
+                        DT_CENTER | DT_SINGLELINE,
+                    );
+                    for center_y in [80, 144] {
+                        if DrawIconEx(
+                            dc,
+                            x + (100 - size as i32) / 2,
+                            center_y - size as i32 / 2,
+                            icon,
+                            size as i32,
+                            size as i32,
+                            0,
+                            null_mut(),
+                            DI_NORMAL,
+                        ) == 0
+                        {
+                            DestroyIcon(icon);
+                            return Err("Native icon rendering failed".into());
+                        }
+                    }
+                }
+                if !icon.is_null() {
+                    DestroyIcon(icon);
+                }
+                let footprint = footprint?;
+                if footprint["width"] != size || footprint["height"] != size {
+                    return Err(
+                        "Embedded icon dimensions do not match the requested resource".into(),
+                    );
+                }
+                resources.push(footprint);
+            }
+            let tray_icon = crate::ui::create_tray_icon(instance);
+            let tray = icon_footprint(tray_icon);
+            if !tray_icon.is_null() {
+                DestroyIcon(tray_icon);
+            }
+            let tray = tray?;
+            if tray["width"] != GetSystemMetrics(SM_CXSMICON)
+                || tray["height"] != GetSystemMetrics(SM_CYSMICON)
+            {
+                return Err("Tray icon does not match the native small-icon metric".into());
+            }
+            GdiFlush();
+            let mut rgba = Vec::with_capacity(400 * 176 * 4);
+            for pixel in
+                std::slice::from_raw_parts(pixels.cast::<u8>(), 400 * 176 * 4).chunks_exact(4)
+            {
+                rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
+            }
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let file = fs::File::create(path).map_err(|e| e.to_string())?;
+            let mut encoder = png::Encoder::new(BufWriter::new(file), 400, 176);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+            writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
+            writer.finish().map_err(|e| e.to_string())?;
+            fs::write(path.with_extension("capture.json"),serde_json::to_vec_pretty(&serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"backend":"Native embedded HICON / GDI DrawIconEx; no Explorer or desktop capture","sizes":resources,"tray_metric":tray})).unwrap()).map_err(|e|e.to_string())
+        })();
+        SelectObject(dc, previous);
+        DeleteObject(bitmap);
+        DeleteDC(dc);
+        result
     }
 }
 pub fn sample_devices() -> Vec<Device> {

@@ -191,6 +191,7 @@ struct App {
     details_hwnd: HWND,
     controls: Vec<(u16, HWND)>,
     themes: [Theme; 3],
+    icon: HICON,
     tray_icon: HICON,
     tray_ok: bool,
     taskbar_created: u32,
@@ -1306,7 +1307,7 @@ impl App {
                         dc,
                         theme.s(width / 2 - 16),
                         theme.s(125),
-                        self.tray_icon,
+                        self.icon,
                         theme.s(32),
                         theme.s(32),
                         0,
@@ -1367,7 +1368,7 @@ impl App {
                 item.hDC,
                 card.left + theme.s(12),
                 card.top + theme.s(20),
-                self.tray_icon,
+                self.icon,
                 theme.s(28),
                 theme.s(28),
                 0,
@@ -1444,6 +1445,9 @@ impl Drop for App {
             }
             if !self.tray_icon.is_null() {
                 DestroyIcon(self.tray_icon);
+            }
+            if !self.icon.is_null() {
+                DestroyIcon(self.icon);
             }
         }
     }
@@ -1677,14 +1681,33 @@ unsafe extern "system" fn window_proc(
 
 // MAKEINTRESOURCEW(1) is a resource ordinal, deliberately not a memory pointer.
 #[allow(clippy::manual_dangling_ptr)]
-fn create_icon(instance: HINSTANCE) -> HICON {
-    let embedded = unsafe { LoadImageW(instance, 1usize as *const u16, IMAGE_ICON, 32, 32, 0) };
+pub(crate) fn create_icon(instance: HINSTANCE, size: i32) -> HICON {
+    let embedded = unsafe { LoadImageW(instance, 1usize as *const u16, IMAGE_ICON, size, size, 0) };
     if !embedded.is_null() {
         return embedded;
     }
-    let pixels = crate::icon::pixels();
-    let mask = [0u8; 32 * 4];
-    unsafe { CreateIcon(instance, 32, 32, 1, 32, mask.as_ptr(), pixels.as_ptr()) }
+    let mut pixels = crate::icon::pixels(size as usize);
+    // CreateIcon's XOR bitmap is bottom-up, unlike the shared rasterizer.
+    let stride = size as usize * 4;
+    for y in 0..size as usize / 2 {
+        let (top, bottom) = pixels.split_at_mut((size as usize - 1 - y) * stride);
+        top[y * stride..(y + 1) * stride].swap_with_slice(&mut bottom[..stride]);
+    }
+    let mask = vec![0u8; (size as usize).div_ceil(16) * 2 * size as usize];
+    unsafe { CreateIcon(instance, size, size, 1, 32, mask.as_ptr(), pixels.as_ptr()) }
+}
+
+// Use the notification area's small-icon metric, independently of UI illustrations.
+#[allow(clippy::manual_dangling_ptr)]
+pub(crate) fn create_tray_icon(instance: HINSTANCE) -> HICON {
+    let mut icon = null_mut();
+    if unsafe { LoadIconMetric(instance, 1usize as *const u16, LIM_SMALL, &mut icon) } >= 0
+        && !icon.is_null()
+    {
+        icon
+    } else {
+        create_icon(instance, unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16))
+    }
 }
 
 fn child(
@@ -1778,7 +1801,14 @@ pub fn run() {
             }
         }
         let instance = GetModuleHandleW(null());
-        let icon = create_icon(instance);
+        if let Some(options) = diagnostic.as_ref().filter(|d| d.screen == "icons") {
+            let result = capture::save_icons(instance, &options.output);
+            if let Err(error) = &result {
+                eprintln!("{error}");
+            }
+            std::process::exit(if result.is_ok() { 0 } else { 1 });
+        }
+        let icon = create_icon(instance, 32);
         let name = wide(CLASS);
         let class = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
@@ -2011,7 +2041,8 @@ pub fn run() {
             details_hwnd,
             controls,
             themes: [Theme::new(dpi), Theme::new(dpi), Theme::new(dpi)],
-            tray_icon: icon,
+            icon,
+            tray_icon: create_tray_icon(instance),
             tray_ok: false,
             taskbar_created: RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
             notification,
