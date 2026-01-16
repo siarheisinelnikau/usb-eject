@@ -3,7 +3,7 @@
   "date": "2026-10-31",
   "processCompletion": "All capture and measurement processes exited successfully",
   "regression": "Native colors checked during and outside controller-state borrow",
-  "executable": "UsbEject-v0.1.1.exe",
+  "executable": "UsbEject-v0.1.2.exe",
   "screenshots": [
     "drive-details.png",
     "panel-150.png",
@@ -12,8 +12,13 @@
     "panel-sample.png",
     "settings.png"
   ],
-  "executableSha256": "e77fa49c09bc0a02a1fb39e9465a079633e3fa13fe8f1ca08fac06f8b9477191",
-  "version": "0.1.1",
+  "executableSha256": "0c76e35b01c9d5f7c8e799dfef2a1aaf33418a93c1ce28b52e7b3a6555f8d7dd",
+  "version": "0.1.2",
   "source": "Bounded application render-save-exit mode; no Computer Use",
-  "data": "Synthetic, non-sensitive fixtures; no real device operations or user settings"
+  "data": "Synthetic, non-sensitive fixtures; no real device operations or user settings",
+  "nativeIconProof": {
+    "image": "tray-icons.png",
+    "evidence": "../validation/icons-v0.1.2.json",
+    "source": "Native embedded HICON / GDI DrawIconEx; no Explorer or desktop capture"
+  }
 }

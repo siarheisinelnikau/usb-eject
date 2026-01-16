@@ -1,5 +1,19 @@
 # Local validation record
 
+## v0.1.2 — undersized notification icon
+
+The supplied notification-area screenshot showed a small, narrow mark relative to neighboring icons. The previous source left 5–6 transparent columns around its only 32-pixel image: its 22 × 24 footprint became approximately 11 × 12 pixels at the standard 16-pixel tray size. The replacement fills 14 × 14 pixels at 16 pixels, with a larger white eject symbol and the interface's teal accent. Eight individually rasterized native sizes are embedded. The tray loads `LoadIconMetric(LIM_SMALL)` rather than sharing the panel's fixed 32-pixel icon.
+
+Validation against the optimized Windows x64 0.1.2 package:
+
+- Formatting, Clippy with warnings denied and all 17 fixture tests passed. PE version, architecture, GUI subsystem, manifest, dependency and checksum inspection passed.
+- Bounded native resource capture loaded every embedded size (16/20/24/32/40/48/64/256) and inspected its actual HICON bitmap. The standard tray handle was 16 × 16 pixels, with alpha ≥ 128 bounds `[1, 1, 15, 15]`, confirming the 14 × 14 visible footprint. All size and occupancy probes passed.
+- The actual Windows `DrawIconEx` output was reviewed at 16/20/24/32 pixels on dark and light backgrounds. This is an icon resource proof, not an Explorer screenshot. Six refreshed native client screenshots were also inspected; Settings reports 0.1.2. All diagnostic processes exited successfully.
+- Source inspection still confirms CPU GDI, native controls and a blocking `GetMessageW` loop. The icon is loaded once; no animation, periodic tray update or redraw timer was added. Settled visible, hidden-with-fixture-update and restored intervals of approximately five seconds each produced zero layouts, ordinary paints, owner-draw calls or scene print requests for panel and Settings. One-core CPU peaked at 0.62% in the panel sample and 1.25% in restored Settings; other samples showed no measurable delta. Three local native-checkbox backdrop requests occurred in restored Settings, with no scene rebuild; hidden backdrop counts were zero. GPU/presentation telemetry was not collected.
+- No Computer Use, actual tray registration/clicking, real device operation, user settings I/O or update request was performed. Physical notification-area appearance and mixed-monitor scaling remain manual checks.
+
+Evidence: [native icon resource probe](validation/icons-v0.1.2.json), [panel load](validation/panel-load-v0.1.2.json), [Settings load](validation/settings-load-v0.1.2.json), [current capture manifest](screenshots/captures.json).
+
 ## v0.1.1 — reported native-control backgrounds
 
 The supplied live 0.1.0 screenshot exposed a gap in the previous static review: PrintWindow repainted controls after the controller borrow had ended, while ordinary Windows callbacks could arrive during that borrow. The color handler then fell through to the default system background. A bounded native probe reproduced **14 gray `#F0F0F0` backgrounds inside the state borrow versus 14 white `#FFFFFF` backgrounds outside it**. This was an application painting defect, not an inferred user theme setting.
