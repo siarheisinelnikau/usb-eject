@@ -2,7 +2,7 @@
 
 A small native Windows tray utility for reviewing and safely ejecting an external physical drive and all its volumes. Independent MIT-licensed implementation with original UI and artwork; no affiliation with USB Safely Remove.
 
-**Status: v0.1.1 local preview.** The main interaction is a compact tray panel, with separate Settings and Drive details windows. This revision fixes gray native-control backgrounds during live painting, simplifies the empty state and replaces the panel's duplicate native caption with a compact application header. The actual native interface has been captured and reviewed without Computer Use. Real device ejection, physical tray clicks and update installation still need manual validation. No repository or release has been published by this development session.
+**Status: v0.1.2 local preview.** The main interaction is a compact tray panel, with separate Settings and Drive details windows. This revision enlarges the tray artwork, simplifies the eject symbol and supplies native icon sizes instead of shrinking a single 32-pixel image. The actual native interface and embedded icons have been captured and reviewed without Computer Use. Real device ejection, physical tray clicks and update installation still need manual validation. No repository or release has been published by this development session.
 
 ## Capabilities
 
@@ -28,7 +28,7 @@ Omit `-Offline` when dependencies need to be fetched. Both scripts use a reposit
 
 Output in `dist/`:
 
-- `UsbEject-v0.1.1.exe` — the single Windows x64 executable.
+- `UsbEject-v0.1.2.exe` — the single Windows x64 executable.
 - `SHA256SUMS`, `LICENSE`, `THIRD-PARTY-NOTICES.txt`, `build-info.json`, `inspection.json`.
 
 The filename intentionally has no architecture suffix while only one executable architecture is distributed. Keep license notices with redistributed copies. The CI workflow builds review artifacts only; it does not publish GitHub Releases.
@@ -67,6 +67,10 @@ The planned canonical source is [siarheisinelnikau/usb-eject](https://github.com
 
 These are real PNGs saved by the executable through its native Win32/GDI client-rendering path. The captures are isolated and do not enumerate or operate real drives, read user settings, contact update servers or automate the desktop. Populated names and capacities below are explicitly synthetic fixtures. Native title bars and the Windows notification area are outside these client-area screenshots.
 
+![UsbEject embedded native icons at 16, 20, 24 and 32 pixels on dark and light backgrounds](docs/screenshots/tray-icons.png)
+
+Native icon resource proof at actual pixel sizes, drawn by Windows `DrawIconEx`. This is not an Explorer tray screenshot. At 16 pixels the visible artwork is now 14 × 14 pixels, with a larger white eject mark. The executable includes 16, 20, 24, 32, 40, 48, 64 and 256-pixel resources; the tray uses the Windows small-icon metric through [LoadIconMetric](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-loadiconmetric).
+
 ![UsbEject compact tray panel with two sample drives and the selected drive action](docs/screenshots/panel-sample.png)
 
 Compact panel, selected sample drive, 100% scale. Selection is explicit in ordinary use; the fixture selects its first sample to show the action state.
@@ -89,7 +93,7 @@ Synthetic Windows-refusal state, 100% scale. No removal request was made to obta
 ./scripts/capture.ps1 -OutputRoot E:/work/github/usb-eject/.test-output/visual-review -Measure
 ```
 
-Build the release target first. This explicitly launches disposable diagnostic instances, writes native client PNGs for empty/populated/error/settings/details states plus 150% scale, and exits. It never activates a normal running instance or performs device/network/settings operations. Fresh output paths are required. `--capture OUTPUT.png --screen SCREEN --scale 100|150|200` is the executable's developer-only render/save/exit mode; `--measure OUTPUT.json [--screen settings]` records bounded visible, hidden and restored idle intervals. The review script also checks native color callbacks while application state is borrowed and rejects unexpected scene work in settled samples. Local native-checkbox backdrop requests are measured separately; they do not rebuild the Settings scene. These are not ordinary settings or a substitute for physical tray, keyboard or hardware checks. Additional reviewed captures: [drive details](docs/screenshots/drive-details.png) and [panel at 150%](docs/screenshots/panel-150.png).
+Build the release target first. This explicitly launches disposable diagnostic instances, writes native client PNGs for empty/populated/error/settings/details states plus 150% scale, verifies embedded icon sizes, and exits. It never activates a normal running instance or performs device/network/settings operations. Fresh output paths are required. `--capture OUTPUT.png --screen SCREEN --scale 100|150|200` is the executable's developer-only render/save/exit mode; `--screen icons` instead renders native icon resources at their actual sizes, checks their alpha bounds and the tray metric, and exits without creating an application window. `--measure OUTPUT.json [--screen settings]` records bounded visible, hidden and restored idle intervals. The review script also checks native color callbacks while application state is borrowed and rejects unexpected scene work in settled samples. Local native-checkbox backdrop requests are measured separately; they do not rebuild the Settings scene. These are not ordinary settings or a substitute for physical tray, keyboard or hardware checks. Additional reviewed captures: [drive details](docs/screenshots/drive-details.png) and [panel at 150%](docs/screenshots/panel-150.png).
 
 ## License
 

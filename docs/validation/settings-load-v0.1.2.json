@@ -1,0 +1,244 @@
+{
+  "backend": "Win32 native controls + CPU GDI; OS desktop composition remains enabled",
+  "draw_events": [
+    {
+      "action": 1,
+      "control": 110,
+      "state": 768,
+      "step": 0
+    },
+    {
+      "action": 1,
+      "control": 118,
+      "state": 768,
+      "step": 0
+    },
+    {
+      "action": 1,
+      "control": 110,
+      "state": 768,
+      "step": 17
+    },
+    {
+      "action": 1,
+      "control": 118,
+      "state": 768,
+      "step": 17
+    }
+  ],
+  "executable": "E:\\work\\github\\usb-eject\\target\\x86_64-pc-windows-msvc\\release\\UsbEject.exe",
+  "fixture": "Two synthetic external drives; no device discovery/ejection, settings I/O or network",
+  "gpu_telemetry": "Not collected",
+  "paint_events": [
+    {
+      "printing": false,
+      "rect": [
+        0,
+        0,
+        540,
+        480
+      ],
+      "step": 0,
+      "window": 1
+    },
+    {
+      "printing": false,
+      "rect": [
+        0,
+        0,
+        540,
+        480
+      ],
+      "step": 17,
+      "window": 1
+    }
+  ],
+  "phases": [
+    {
+      "cpu_percent_available_processors": 0.0,
+      "cpu_percent_one_core": 0.0,
+      "cpu_seconds": 0.0,
+      "layouts": 0,
+      "logical_processors_available": 20,
+      "native_checkbox_backdrops": 0,
+      "owner_draws": 0,
+      "paints": 0,
+      "print_client_requests": 0,
+      "seconds": 4.996,
+      "state": "visible_idle"
+    },
+    {
+      "cpu_percent_available_processors": 0.0,
+      "cpu_percent_one_core": 0.0,
+      "cpu_seconds": 0.0,
+      "layouts": 0,
+      "logical_processors_available": 20,
+      "native_checkbox_backdrops": 0,
+      "owner_draws": 0,
+      "paints": 0,
+      "print_client_requests": 0,
+      "seconds": 4.999,
+      "state": "hidden_with_data_update"
+    },
+    {
+      "cpu_percent_available_processors": 0.06237524950099801,
+      "cpu_percent_one_core": 1.2475049900199602,
+      "cpu_seconds": 0.0625,
+      "layouts": 0,
+      "logical_processors_available": 20,
+      "native_checkbox_backdrops": 3,
+      "owner_draws": 0,
+      "paints": 0,
+      "print_client_requests": 0,
+      "seconds": 5.01,
+      "state": "restored_idle"
+    }
+  ],
+  "pid": 44812,
+  "samples": [
+    {
+      "cpu_100ns": 312500,
+      "metrics": {
+        "draws": 2,
+        "layouts": [
+          0,
+          2,
+          0
+        ],
+        "native_backdrops": 1,
+        "paints": [
+          0,
+          1,
+          0
+        ],
+        "prints": [
+          0,
+          0,
+          0
+        ]
+      },
+      "step": 5,
+      "wall_ms": 1793479708649
+    },
+    {
+      "cpu_100ns": 312500,
+      "metrics": {
+        "draws": 2,
+        "layouts": [
+          0,
+          2,
+          0
+        ],
+        "native_backdrops": 1,
+        "paints": [
+          0,
+          1,
+          0
+        ],
+        "prints": [
+          0,
+          0,
+          0
+        ]
+      },
+      "step": 10,
+      "wall_ms": 1793479713645
+    },
+    {
+      "cpu_100ns": 312500,
+      "metrics": {
+        "draws": 2,
+        "layouts": [
+          0,
+          2,
+          0
+        ],
+        "native_backdrops": 1,
+        "paints": [
+          0,
+          1,
+          0
+        ],
+        "prints": [
+          0,
+          0,
+          0
+        ]
+      },
+      "step": 12,
+      "wall_ms": 1793479715647
+    },
+    {
+      "cpu_100ns": 312500,
+      "metrics": {
+        "draws": 2,
+        "layouts": [
+          0,
+          2,
+          0
+        ],
+        "native_backdrops": 1,
+        "paints": [
+          0,
+          1,
+          0
+        ],
+        "prints": [
+          0,
+          0,
+          0
+        ]
+      },
+      "step": 17,
+      "wall_ms": 1793479720646
+    },
+    {
+      "cpu_100ns": 312500,
+      "metrics": {
+        "draws": 4,
+        "layouts": [
+          0,
+          3,
+          0
+        ],
+        "native_backdrops": 2,
+        "paints": [
+          0,
+          2,
+          0
+        ],
+        "prints": [
+          0,
+          0,
+          0
+        ]
+      },
+      "step": 19,
+      "wall_ms": 1793479722646
+    },
+    {
+      "cpu_100ns": 937500,
+      "metrics": {
+        "draws": 4,
+        "layouts": [
+          0,
+          3,
+          0
+        ],
+        "native_backdrops": 5,
+        "paints": [
+          0,
+          2,
+          0
+        ],
+        "prints": [
+          0,
+          0,
+          0
+        ]
+      },
+      "step": 24,
+      "wall_ms": 1793479727656
+    }
+  ]
+}
