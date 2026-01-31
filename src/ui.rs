@@ -37,7 +37,6 @@ use windows_sys::Win32::{
 const WAKE: u32 = WM_APP + 1;
 const TRAY: u32 = WM_APP + 2;
 const RESTORE: u32 = WM_APP + 3;
-const REDRAW: u32 = WM_APP + 4;
 const RESCAN_TIMER: usize = 1;
 const CLASS: &str = "UsbEject.NativeWindow.v1";
 const LIST: u16 = 101;
@@ -55,7 +54,6 @@ const QUIT: u16 = 112;
 const OPEN: u16 = 113;
 const SETTINGS: u16 = 114;
 const DETAILS: u16 = 115;
-const MORE: u16 = 116;
 const HIDE: u16 = 117;
 const CLOSE_SETTINGS: u16 = 118;
 const CLOSE_DETAILS: u16 = 119;
@@ -214,7 +212,6 @@ struct App {
     installing: bool,
     handoff: bool,
     available: Option<Available>,
-    menu_open: bool,
     diagnostic: Option<capture::Options>,
     metrics: capture::Metrics,
     dirty: [bool; 3],
@@ -229,6 +226,9 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
     static DEVICE_EPOCH: Arc<AtomicU64> = Arc::new(AtomicU64::new(1));
     static NATIVE_BACKDROPS: Cell<u64> = const { Cell::new(0) };
+    static MENU_OPEN: Cell<bool> = const { Cell::new(false) };
+    static DEFERRED_DRAWS: Cell<u8> = const { Cell::new(0) };
+    static DRAW_DEFERRALS: Cell<u64> = const { Cell::new(0) };
 }
 
 impl App {
@@ -243,6 +243,29 @@ impl App {
         let text = wide(value);
         unsafe {
             SetWindowTextW(self.control(id), text.as_ptr());
+        }
+        if id == 204 {
+            self.update_status_scrollbar();
+        }
+    }
+    fn update_status_scrollbar(&self) {
+        let control = self.control(204);
+        unsafe {
+            let mut bounds = RECT::default();
+            GetClientRect(control, &mut bounds);
+            let dc = GetDC(control);
+            let font = SendMessageW(control, WM_GETFONT, 0, 0) as HFONT;
+            let previous = SelectObject(dc, font);
+            let mut metrics: TEXTMETRICW = zeroed();
+            GetTextMetricsW(dc, &mut metrics);
+            SelectObject(dc, previous);
+            ReleaseDC(control, dc);
+            let lines = SendMessageW(control, EM_GETLINECOUNT, 0, 0) as i32;
+            let needed = lines * metrics.tmHeight > bounds.bottom - 4;
+            let shown = GetWindowLongPtrW(control, GWL_STYLE) as u32 & WS_VSCROLL != 0;
+            if needed != shown {
+                ShowScrollBar(control, SB_VERT, needed as i32);
+            }
         }
     }
     fn input(&self, id: u16) -> String {
@@ -279,10 +302,11 @@ impl App {
         };
         self.text(202, &summary);
         self.text(215, text);
-        if self.devices.is_empty() {
-            self.resize_panel();
-            self.layout(self.hwnd);
+        self.resize_panel();
+        if self.diagnostic.is_none() && unsafe { IsWindowVisible(self.hwnd) } != 0 {
+            self.position_panel();
         }
+        self.layout(self.hwnd);
     }
     fn selected(&self) -> Option<&Device> {
         let index = unsafe { SendMessageW(self.control(LIST), LB_GETCURSEL, 0, 0) };
@@ -301,7 +325,6 @@ impl App {
                 && current
                 && self.selected().is_some_and(|d| d.blocked.is_none()),
         );
-        self.enabled(REFRESH, !self.disk_busy && !self.installing);
         self.enabled(
             INSPECT,
             !self.disk_busy && !self.installing && current && self.selected().is_some(),
@@ -465,7 +488,6 @@ impl App {
             self.disk_busy = true;
             self.refresh_pending = false;
             self.disk_cancel.store(false, Ordering::Release);
-            self.text(203, "Scanning…");
             self.text(213, "Looking for drives…");
             self.text(214, "Windows is checking connected storage.");
             self.update_buttons();
@@ -501,7 +523,7 @@ impl App {
         }
         match id {
             LIST if notification == LBN_SELCHANGE as u16 => self.selected_changed(),
-            REFRESH => self.scan(),
+            REFRESH if !self.installing => self.scan(),
             EJECT if !self.disk_busy && !self.installing => {
                 let Some(device) = self.selected().cloned() else {
                     return;
@@ -582,7 +604,6 @@ impl App {
             OPEN => self.restore(),
             SETTINGS => self.open_secondary(self.settings_hwnd),
             DETAILS if self.selected().is_some() => self.open_secondary(self.details_hwnd),
-            MORE => self.tray_menu(false),
             HIDE => self.hide_panel(),
             CLOSE_SETTINGS => unsafe {
                 ShowWindow(self.settings_hwnd, SW_HIDE);
@@ -639,12 +660,10 @@ impl App {
                         self.snapshot_generation = epoch;
                         match result {
                             Ok(devices) => {
-                                self.text(203, &format!("{} drives", devices.len()));
                                 self.populate(devices);
                             }
                             Err(error) => {
                                 self.populate(vec![]);
-                                self.text(203, "Discovery failed");
                                 self.status(&error);
                             }
                         }
@@ -788,7 +807,6 @@ impl App {
         } else {
             self.populate(vec![]);
         }
-        self.text(203, &format!("{} drives", self.devices.len()));
         self.text(204,"Automatic startup checks are disabled. You can check for updates manually at any time.");
         if screen == "error" {
             self.status("Windows could not remove this drive. Close files and apps using it, then try again. Open Details to inspect a busy file.");
@@ -888,14 +906,11 @@ impl App {
         self.layout(self.hwnd);
         unsafe {
             SetForegroundWindow(self.hwnd);
-            SetFocus(self.control(if self.devices.is_empty() {
-                REFRESH
-            } else {
-                LIST
-            }));
+            SetFocus(self.control(if self.devices.is_empty() { HIDE } else { LIST }));
         }
     }
     fn open_secondary(&mut self, hwnd: HWND) {
+        self.position_near_tray(hwnd);
         unsafe {
             ShowWindow(
                 hwnd,
@@ -958,68 +973,32 @@ impl App {
             Shell_NotifyIconW(NIM_MODIFY, &data);
         }
     }
-    fn tray_menu(&mut self, from_tray: bool) {
-        self.menu_open = true;
-        unsafe {
-            let menu = CreatePopupMenu();
-            for (id, label) in [
-                (OPEN, "Open drives"),
-                (SETTINGS, "Settings"),
-                (REFRESH, "Refresh drives"),
-            ] {
-                AppendMenuW(menu, MF_STRING, id as usize, wide(label).as_ptr());
-            }
-            AppendMenuW(menu, MF_SEPARATOR, 0, null());
-            AppendMenuW(
-                menu,
-                MF_STRING,
-                QUIT as usize,
-                wide("Quit UsbEject\tCtrl+Q").as_ptr(),
-            );
-            let mut point = POINT::default();
-            if from_tray {
-                GetCursorPos(&mut point);
-            } else {
-                let mut r = RECT::default();
-                GetWindowRect(self.control(MORE), &mut r);
-                point = POINT {
-                    x: r.right,
-                    y: r.bottom,
-                };
-            }
-            SetForegroundWindow(self.hwnd);
-            let command = TrackPopupMenu(
-                menu,
-                TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_RIGHTALIGN,
-                point.x,
-                point.y,
-                0,
-                self.hwnd,
-                null(),
-            );
-            DestroyMenu(menu);
-            if command != 0 {
-                PostMessageW(self.hwnd, WM_COMMAND, command as usize, 0);
-            }
-            PostMessageW(self.hwnd, WM_NULL, 0, 0);
-        }
-        self.menu_open = false;
-    }
     fn panel_rows(&self) -> i32 {
         self.devices.len().min(3) as i32
     }
     fn panel_content_height(&self) -> i32 {
         if self.devices.is_empty() {
-            154
+            108
         } else {
-            self.panel_rows() * 82
+            self.panel_rows() * 76
         }
     }
     fn panel_client_height(&self) -> i32 {
         if self.devices.is_empty() {
-            344 + if self.input(202).is_empty() { 0 } else { 64 }
+            if self.input(202).is_empty() {
+                180
+            } else {
+                176 + self.panel_status_height() + 16
+            }
         } else {
-            112 + self.panel_content_height() + 200
+            64 + self.panel_content_height() + 50 + self.panel_status_height() + 14
+        }
+    }
+    fn panel_status_height(&self) -> i32 {
+        if self.input(202).chars().count() > 95 {
+            72
+        } else {
+            40
         }
     }
     fn resize_panel(&self) {
@@ -1027,7 +1006,7 @@ impl App {
         let mut bounds = RECT {
             left: 0,
             top: 0,
-            right: 440 * dpi as i32 / 96,
+            right: 380 * dpi as i32 / 96,
             bottom: self.panel_client_height() * dpi as i32 / 96,
         };
         unsafe {
@@ -1050,6 +1029,9 @@ impl App {
         }
     }
     fn position_panel(&self) {
+        self.position_near_tray(self.hwnd);
+    }
+    fn position_near_tray(&self, hwnd: HWND) {
         unsafe {
             let id = NOTIFYICONIDENTIFIER {
                 cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32,
@@ -1062,44 +1044,59 @@ impl App {
             let monitor = if found {
                 MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)
             } else {
-                MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST)
+                let mut point = POINT::default();
+                GetCursorPos(&mut point);
+                MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST)
             };
             let mut info = MONITORINFO {
                 cbSize: size_of::<MONITORINFO>() as u32,
                 ..zeroed()
             };
-            GetMonitorInfoW(monitor, &mut info);
+            if GetMonitorInfoW(monitor, &mut info) == 0 {
+                return;
+            }
             let mut window = RECT::default();
-            GetWindowRect(self.hwnd, &mut window);
+            // Move while hidden first so GetDpiForWindow reflects the tray's monitor.
+            if IsWindowVisible(hwnd) == 0 {
+                SetWindowPos(
+                    hwnd,
+                    null_mut(),
+                    info.rcWork.right - 1,
+                    info.rcWork.bottom - 1,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            let dpi = self.window_dpi(hwnd);
+            let (width, height) = if hwnd == self.hwnd {
+                (380, self.panel_client_height())
+            } else if hwnd == self.settings_hwnd {
+                (480, 380)
+            } else {
+                (620, 640)
+            };
+            window.right = width * dpi as i32 / 96;
+            window.bottom = height * dpi as i32 / 96;
+            AdjustWindowRectExForDpi(
+                &mut window,
+                GetWindowLongPtrW(hwnd, GWL_STYLE) as u32,
+                0,
+                GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32,
+                dpi,
+            );
             let width = window.right - window.left;
             let height = window.bottom - window.top;
-            let gap = 12 * self.window_dpi(self.hwnd) as i32 / 96;
-            let x = (if found {
-                anchor.right - width
-            } else {
-                info.rcWork.right - width - gap
-            })
-            .clamp(
-                info.rcWork.left + gap,
-                (info.rcWork.right - width - gap).max(info.rcWork.left + gap),
-            );
-            let y = (if found {
-                anchor.top - height - gap
-            } else {
-                info.rcWork.bottom - height - gap
-            })
-            .clamp(
-                info.rcWork.top + gap,
-                (info.rcWork.bottom - height - gap).max(info.rcWork.top + gap),
-            );
+            let gap = 8 * dpi as i32 / 96;
+            let point = anchored_position(info.rcWork, found.then_some(anchor), width, height, gap);
             SetWindowPos(
-                self.hwnd,
+                hwnd,
                 null_mut(),
-                x,
-                y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                point.x,
+                point.y,
+                width,
+                height,
+                SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
     }
@@ -1125,49 +1122,40 @@ impl App {
         let width = rect.right * 96 / dpi as i32;
         let height = rect.bottom * 96 / dpi as i32;
         let positions: Vec<(u16, i32, i32, i32, i32)> = if index == 0 {
-            let bottom = 112 + self.panel_content_height();
-            let status_y = bottom + if self.devices.is_empty() { 14 } else { 62 };
+            let bottom = 64 + self.panel_content_height();
+            let status_y = bottom + 50;
             vec![
-                (200, 24, 18, width - 190, 34),
-                (216, 24, 55, width - 48, 22),
-                (REFRESH, width - 152, 20, 84, 34),
-                (HIDE, width - 56, 20, 32, 34),
-                (208, 24, 92, 200, 20),
-                (203, width - 119, 92, 95, 20),
-                (LIST, 20, 112, width - 40, self.panel_content_height()),
-                (213, 24, 188, width - 48, 28),
-                (214, 32, 222, width - 64, 38),
-                (DETAILS, 24, bottom + 14, 112, 36),
-                (CANCEL_MAIN, 24, bottom + 14, 112, 36),
-                (EJECT, 146, bottom + 14, width - 170, 36),
+                (200, 20, 12, width - 76, 32),
+                (HIDE, width - 48, 12, 28, 30),
+                (LIST, 16, 64, width - 32, self.panel_content_height()),
+                (213, 68, 82, width - 88, 26),
+                (214, 68, 114, width - 88, 42),
+                (DETAILS, 20, bottom + 8, 88, 34),
+                (CANCEL_MAIN, 20, bottom + 8, 88, 34),
+                (EJECT, 116, bottom + 8, width - 136, 34),
                 (
                     202,
-                    24,
+                    20,
                     if self.devices.is_empty() {
-                        274
+                        176
                     } else {
                         status_y
                     },
-                    width - 48,
-                    56,
+                    width - 40,
+                    self.panel_status_height(),
                 ),
-                (SETTINGS, 24, height - 56, 112, 34),
-                (217, 147, height - 49, width - 245, 22),
-                (MORE, width - 92, height - 56, 68, 34),
             ]
         } else if index == 1 {
             vec![
-                (218, 28, 22, width - 56, 36),
-                (207, 28, 63, width - 56, 24),
-                (219, 28, 111, width - 56, 24),
-                (STARTUP, 28, 148, width - 56, 28),
-                (220, 51, 179, width - 79, 42),
-                (CHECK, 28, 232, 180, 38),
-                (INSTALL, 220, 232, width - 248, 38),
-                (211, 28, 291, width - 56, 20),
-                (204, 28, 317, width - 56, 88),
-                (CANCEL, 28, height - 58, 110, 34),
-                (CLOSE_SETTINGS, width - 128, height - 58, 100, 34),
+                (218, 24, 18, width - 48, 34),
+                (207, 24, 58, width - 48, 24),
+                (STARTUP, 24, 108, width - 48, 28),
+                (220, 47, 140, width - 71, 42),
+                (CHECK, 24, 194, 180, 36),
+                (INSTALL, 216, 194, width - 240, 36),
+                (204, 24, 246, width - 48, 64),
+                (CANCEL, 24, height - 50, 110, 34),
+                (CLOSE_SETTINGS, width - 124, height - 50, 100, 34),
             ]
         } else {
             vec![
@@ -1196,14 +1184,18 @@ impl App {
                 continue;
             }
             let font = match *id {
-                200 | 218 | 221 => theme.title,
+                218 | 221 => theme.title,
+                200 => theme.heading,
                 213 => theme.heading,
-                203 | 208 | 209 | 210 | 211 | 216 | 217 | 207 | 220 => theme.small,
+                209 | 210 | 207 | 220 => theme.small,
                 _ => theme.normal,
             };
             unsafe {
                 SendMessageW(*control, WM_SETFONT, font as usize, 0);
             }
+        }
+        if index == 1 {
+            self.update_status_scrollbar();
         }
         if index == 0 {
             let empty = self.devices.is_empty();
@@ -1215,11 +1207,6 @@ impl App {
             for id in [213, 214] {
                 unsafe {
                     ShowWindow(self.control(id), if empty { SW_SHOW } else { SW_HIDE });
-                }
-            }
-            for id in [208, 203] {
-                unsafe {
-                    ShowWindow(self.control(id), if empty { SW_HIDE } else { SW_SHOW });
                 }
             }
             unsafe {
@@ -1255,7 +1242,7 @@ impl App {
                     self.control(LIST),
                     LB_SETITEMHEIGHT,
                     0,
-                    theme.s(82) as isize,
+                    theme.s(76) as isize,
                 );
             }
         }
@@ -1295,18 +1282,14 @@ impl App {
             GetClientRect(hwnd, &mut rect);
             FillRect(dc, &rect, theme.white);
         }
-        let width = rect.right * 96 / theme.dpi as i32;
         if index == 0 {
-            style::separator(dc, theme.s(84), rect.right);
-            style::separator(dc, rect.bottom - theme.s(72), rect.right);
+            style::separator(dc, theme.s(56), rect.right);
             if self.devices.is_empty() {
-                let badge = theme.rect(width / 2 - 29, 112, 58, 58);
-                style::rounded(dc, badge, theme.s(20), TINT, TINT);
                 unsafe {
                     DrawIconEx(
                         dc,
-                        theme.s(width / 2 - 16),
-                        theme.s(125),
+                        theme.s(20),
+                        theme.s(84),
                         self.icon,
                         theme.s(32),
                         theme.s(32),
@@ -1317,7 +1300,7 @@ impl App {
                 }
             }
         } else if index == 1 {
-            style::separator(dc, theme.s(95), rect.right);
+            style::separator(dc, theme.s(90), rect.right);
         }
     }
     fn draw_item(&mut self, item: &DRAWITEMSTRUCT) {
@@ -1459,6 +1442,193 @@ fn copy_wide(target: &mut [u16], text: &str) {
     target[target.len() - 1] = 0;
 }
 
+fn anchored_position(work: RECT, anchor: Option<RECT>, width: i32, height: i32, gap: i32) -> POINT {
+    POINT {
+        x: anchor
+            .map_or(work.right - width - gap, |r| r.right - width)
+            .clamp(
+                work.left + gap,
+                (work.right - width - gap).max(work.left + gap),
+            ),
+        y: anchor
+            .map_or(work.bottom - height - gap, |r| r.top - height - gap)
+            .clamp(
+                work.top + gap,
+                (work.bottom - height - gap).max(work.top + gap),
+            ),
+    }
+}
+
+fn flush_deferred_draws() {
+    let pending = APP.with(|state| {
+        let state = state.try_borrow().ok()?;
+        let app = state.as_ref()?;
+        Some((
+            DEFERRED_DRAWS.with(|draws| draws.replace(0)),
+            [app.hwnd, app.settings_hwnd, app.details_hwnd],
+        ))
+    });
+    if let Some((pending, windows)) = pending {
+        for (index, hwnd) in windows.into_iter().enumerate() {
+            if pending & (1 << index) != 0 && unsafe { IsWindowVisible(hwnd) } != 0 {
+                unsafe {
+                    RedrawWindow(
+                        hwnd,
+                        null(),
+                        null_mut(),
+                        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+                    );
+                }
+            }
+        }
+    }
+}
+
+// The Windows menu loop must be able to reenter the controller. Refuse an
+// accidental call from a borrowed controller instead of starting a paint loop.
+fn with_menu_dispatch<R>(action: impl FnOnce() -> R) -> Option<R> {
+    if APP.with(|state| state.try_borrow_mut().is_err()) || MENU_OPEN.with(Cell::get) {
+        return None;
+    }
+    struct MenuScope;
+    impl Drop for MenuScope {
+        fn drop(&mut self) {
+            MENU_OPEN.with(|open| open.set(false));
+        }
+    }
+    MENU_OPEN.with(|open| open.set(true));
+    let _scope = MenuScope;
+    Some(action())
+}
+
+fn show_tray_menu(hwnd: HWND, keyboard: bool) {
+    with_menu_dispatch(|| unsafe {
+        let menu = CreatePopupMenu();
+        if menu.is_null() {
+            return;
+        }
+        for (id, label) in [
+            (OPEN, "Open drives"),
+            (SETTINGS, "Settings\tCtrl+,"),
+            (REFRESH, "Refresh drives\tF5"),
+        ] {
+            AppendMenuW(menu, MF_STRING, id as usize, wide(label).as_ptr());
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            QUIT as usize,
+            wide("Quit UsbEject\tCtrl+Q").as_ptr(),
+        );
+        let mut point = POINT::default();
+        if keyboard {
+            let mut bounds = RECT::default();
+            GetWindowRect(hwnd, &mut bounds);
+            point.x = bounds.right - 16;
+            point.y = bounds.bottom - 16;
+        } else {
+            GetCursorPos(&mut point);
+        }
+        SetForegroundWindow(hwnd);
+        let command = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_RIGHTALIGN,
+            point.x,
+            point.y,
+            0,
+            hwnd,
+            null(),
+        );
+        DestroyMenu(menu);
+        if command != 0 {
+            PostMessageW(hwnd, WM_COMMAND, command as usize, 0);
+        } else if GetForegroundWindow() != hwnd {
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        PostMessageW(hwnd, WM_NULL, 0, 0);
+    });
+}
+
+fn menu_dispatch_probe(hwnd: HWND) -> Result<serde_json::Value, String> {
+    flush_deferred_draws();
+    let (control, before) = APP.with(|state| {
+        let state = state.borrow();
+        let app = state.as_ref().unwrap();
+        (
+            app.control(if hwnd == app.hwnd {
+                HIDE
+            } else if hwnd == app.settings_hwnd {
+                CHECK
+            } else {
+                CLOSE_DETAILS
+            }),
+            app.metrics.draws,
+        )
+    });
+    let borrowed_entry_rejected = APP.with(|state| {
+        let _borrow = state.borrow_mut();
+        with_menu_dispatch(|| ()).is_none()
+    });
+    let coalesced = APP.with(|state| {
+        let _borrow = state.borrow_mut();
+        // Three synchronous requests must mark one dirty window without posting
+        // a message that can recursively invalidate during a nested event loop.
+        let item = DRAWITEMSTRUCT {
+            hwndItem: control,
+            ..unsafe { zeroed() }
+        };
+        for _ in 0..3 {
+            unsafe {
+                SendMessageW(
+                    hwnd,
+                    WM_DRAWITEM,
+                    0,
+                    (&item as *const DRAWITEMSTRUCT) as isize,
+                );
+            }
+        }
+        DEFERRED_DRAWS.with(|pending| pending.get().count_ones() == 1)
+    });
+    flush_deferred_draws();
+    let deferrals = DRAW_DEFERRALS.with(Cell::get);
+    let dispatched = with_menu_dispatch(|| unsafe {
+        let dc = GetDC(control);
+        let mut rect = RECT::default();
+        GetClientRect(control, &mut rect);
+        let item = DRAWITEMSTRUCT {
+            CtlType: ODT_BUTTON,
+            CtlID: GetDlgCtrlID(control) as u32,
+            itemAction: ODA_DRAWENTIRE,
+            hwndItem: control,
+            hDC: dc,
+            rcItem: rect,
+            ..zeroed()
+        };
+        SendMessageW(
+            hwnd,
+            WM_DRAWITEM,
+            item.CtlID as usize,
+            (&item as *const DRAWITEMSTRUCT) as isize,
+        );
+        ReleaseDC(control, dc);
+        MENU_OPEN.with(Cell::get)
+    });
+    let after = APP.with(|state| state.borrow().as_ref().unwrap().metrics.draws);
+    let passed = borrowed_entry_rejected
+        && coalesced
+        && dispatched == Some(true)
+        && after == before + 1
+        && DRAW_DEFERRALS.with(Cell::get) == deferrals
+        && !MENU_OPEN.with(Cell::get);
+    if !passed {
+        return Err("Nested menu-dispatch paint regression".into());
+    }
+    Ok(
+        serde_json::json!({"scope":"Real owner-draw callback inside the production menu-dispatch scope; no OS popup or user input", "owner_draws":after-before,"new_deferrals":0,"controller_reentrant":true,"menu_flag_cleared":true,"borrowed_entry_rejected":borrowed_entry_rejected,"reentrant_requests_coalesced":3}),
+    )
+}
+
 // Windows sends these messages synchronously from ShowWindow, EnableWindow,
 // font changes and native backdrop painting. They must work while APP is
 // already borrowed, and before the controller has finished initialization.
@@ -1467,10 +1637,7 @@ fn control_colors(dc: HDC, control: HWND) -> LRESULT {
     unsafe {
         SetTextColor(
             dc,
-            if matches!(
-                id,
-                203 | 207 | 208 | 209 | 210 | 211 | 214 | 216 | 217 | 220
-            ) {
+            if matches!(id, 207 | 209 | 210 | 214 | 220) {
                 MUTED
             } else {
                 INK
@@ -1509,15 +1676,13 @@ unsafe extern "system" fn window_proc(
         }
         return 1;
     }
-    if message == REDRAW {
-        unsafe {
-            RedrawWindow(
-                hwnd,
-                null(),
-                null_mut(),
-                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
-            );
-        }
+    if role == 1
+        && (message == WM_CONTEXTMENU
+            || (message == TRAY && matches!(lparam as u32, WM_RBUTTONUP | WM_CONTEXTMENU)))
+    {
+        // TrackPopupMenu dispatches nested window messages. No APP borrow may
+        // survive into that loop; paint, worker completions and focus must work.
+        show_tray_menu(hwnd, message == WM_CONTEXTMENU && lparam == -1);
         return 0;
     }
     if message == WM_PRINTCLIENT && role == 2 {
@@ -1573,9 +1738,9 @@ unsafe extern "system" fn window_proc(
     let handled = APP.with(|state| {
         let Ok(mut state) = state.try_borrow_mut() else {
             if message == WM_DRAWITEM {
-                unsafe {
-                    PostMessageW(hwnd, REDRAW, 0, 0);
-                }
+                DEFERRED_DRAWS
+                    .with(|pending| pending.set(pending.get() | (1 << (role - 1).clamp(0, 2))));
+                DRAW_DEFERRALS.with(|count| count.set(count.get() + 1));
                 return Some(1);
             }
             return None;
@@ -1601,7 +1766,7 @@ unsafe extern "system" fn window_proc(
             WM_ACTIVATE if role == 1 && wparam & 0xffff == WA_INACTIVE as usize => {
                 let own_target =
                     lparam as HWND == app.settings_hwnd || lparam as HWND == app.details_hwnd;
-                if app.tray_ok && !app.menu_open && !app.ejecting && !own_target {
+                if app.tray_ok && !MENU_OPEN.with(Cell::get) && !app.ejecting && !own_target {
                     app.hide_panel();
                 }
             }
@@ -1662,20 +1827,17 @@ unsafe extern "system" fn window_proc(
             WM_MEASUREITEM => {
                 let item = unsafe { &mut *(lparam as *mut MEASUREITEMSTRUCT) };
                 if item.CtlID == LIST as u32 {
-                    item.itemHeight = 82 * app.window_dpi(hwnd) / 96;
+                    item.itemHeight = 76 * app.window_dpi(hwnd) / 96;
                     return Some(1);
                 }
                 return None;
             }
-            TRAY => match lparam as u32 {
-                WM_LBUTTONUP => app.restore(),
-                WM_RBUTTONUP | WM_CONTEXTMENU => app.tray_menu(true),
-                _ => {}
-            },
+            TRAY if lparam as u32 == WM_LBUTTONUP => app.restore(),
             _ => return None,
         }
         Some(0)
     });
+    flush_deferred_draws();
     handled.unwrap_or_else(|| unsafe { DefWindowProcW(hwnd, message, wparam, lparam) })
 }
 
@@ -1849,8 +2011,8 @@ pub fn run() {
             Theme::caption(hwnd);
             hwnd
         };
-        let hwnd = make_window("UsbEject", 1, null_mut(), 440, 440, true);
-        let settings_hwnd = make_window("UsbEject · Settings", 2, hwnd, 540, 520, false);
+        let hwnd = make_window("UsbEject", 1, null_mut(), 380, 320, true);
+        let settings_hwnd = make_window("UsbEject · Settings", 2, hwnd, 480, 420, false);
         let details_hwnd = make_window("UsbEject · Drive details", 3, hwnd, 620, 680, false);
         if hwnd.is_null() || settings_hwnd.is_null() || details_hwnd.is_null() {
             if !hwnd.is_null() {
@@ -1863,12 +2025,8 @@ pub fn run() {
             return;
         }
         let mut controls = Vec::new();
-        label(hwnd, &mut controls, 200, "UsbEject");
-        label(hwnd, &mut controls, 216, "External drives, safely removed.");
-        button(hwnd, &mut controls, REFRESH, "Refresh");
+        label(hwnd, &mut controls, 200, "External drives");
         button(hwnd, &mut controls, HIDE, "Hide to tray");
-        label(hwnd, &mut controls, 208, "EXTERNAL DRIVES");
-        label(hwnd, &mut controls, 203, "Scanning…");
         child(
             hwnd,
             &mut controls,
@@ -1888,7 +2046,7 @@ pub fn run() {
             213,
             "STATIC",
             "No external drives",
-            windows_sys::Win32::System::SystemServices::SS_CENTER | WS_GROUP,
+            WS_GROUP,
         );
         child(
             hwnd,
@@ -1896,15 +2054,12 @@ pub fn run() {
             214,
             "STATIC",
             "Connect a USB drive to see it here.",
-            windows_sys::Win32::System::SystemServices::SS_CENTER,
+            SS_LEFT,
         );
         button(hwnd, &mut controls, DETAILS, "Details");
         button(hwnd, &mut controls, CANCEL_MAIN, "Cancel");
         button(hwnd, &mut controls, EJECT, "Safely eject");
         label(hwnd, &mut controls, 202, "");
-        button(hwnd, &mut controls, SETTINGS, "Settings");
-        label(hwnd, &mut controls, 217, "Runs in your tray");
-        button(hwnd, &mut controls, MORE, "More");
 
         label(settings_hwnd, &mut controls, 218, "Settings");
         label(
@@ -1913,7 +2068,6 @@ pub fn run() {
             207,
             &format!("UsbEject  ·  Version {}  ·  Windows x64", update::VERSION),
         );
-        label(settings_hwnd, &mut controls, 219, "Updates");
         child(
             settings_hwnd,
             &mut controls,
@@ -1935,7 +2089,6 @@ pub fn run() {
             INSTALL,
             "Download and install",
         );
-        label(settings_hwnd, &mut controls, 211, "UPDATE STATUS");
         edit(
             settings_hwnd,
             &mut controls,
@@ -2008,12 +2161,12 @@ pub fn run() {
                 left: 0,
                 top: 0,
                 right: if secondary == settings_hwnd {
-                    540 * dpi as i32 / 96
+                    480 * dpi as i32 / 96
                 } else {
                     620 * dpi as i32 / 96
                 },
                 bottom: if secondary == settings_hwnd {
-                    480 * dpi as i32 / 96
+                    380 * dpi as i32 / 96
                 } else {
                     640 * dpi as i32 / 96
                 },
@@ -2064,7 +2217,6 @@ pub fn run() {
             installing: false,
             handoff: false,
             available: None,
-            menu_open: false,
             diagnostic,
             metrics: capture::Metrics::default(),
             dirty: [true; 3],
@@ -2126,6 +2278,7 @@ pub fn run() {
                     target,
                     &options.output,
                     serde_json::json!({"under_state_borrow":under_borrow,"outside_state_borrow":outside_borrow}),
+                    menu_dispatch_probe(target),
                 );
                 DestroyWindow(hwnd);
                 APP.with(|s| {
@@ -2142,8 +2295,24 @@ pub fn run() {
         {
             APP.with(|s| s.borrow_mut().as_mut().unwrap().restore());
         }
+        flush_deferred_draws();
         let mut message = MSG::default();
         while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+            if message.message == WM_KEYDOWN
+                && (message.wParam == 0x74 || (message.wParam == 0xbc && GetKeyState(0x11) < 0))
+            {
+                PostMessageW(
+                    hwnd,
+                    WM_COMMAND,
+                    if message.wParam == 0x74 {
+                        REFRESH
+                    } else {
+                        SETTINGS
+                    } as usize,
+                    0,
+                );
+                continue;
+            }
             if message.message == WM_KEYDOWN
                 && message.wParam == b'Q' as usize
                 && GetKeyState(0x11) < 0
@@ -2182,5 +2351,71 @@ pub fn run() {
         if failed {
             std::process::exit(3);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_and_panel_share_the_bottom_right_tray_anchor() {
+        let work = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1040,
+        };
+        let anchor = RECT {
+            left: 1800,
+            top: 1048,
+            right: 1816,
+            bottom: 1064,
+        };
+        let panel = anchored_position(work, Some(anchor), 382, 322, 8);
+        let settings = anchored_position(work, Some(anchor), 496, 419, 8);
+        assert_eq!(panel.x + 382, settings.x + 496);
+        assert_eq!(panel.y + 322, settings.y + 419);
+        assert!(settings.x > 1200 && settings.y > 600);
+    }
+
+    #[test]
+    fn placement_clamps_top_and_left_taskbars_on_negative_coordinate_monitors() {
+        let work = RECT {
+            left: -1920,
+            top: 40,
+            right: 0,
+            bottom: 1080,
+        };
+        for anchor in [
+            RECT {
+                left: -1920,
+                top: 10,
+                right: -1904,
+                bottom: 26,
+            },
+            RECT {
+                left: -1920,
+                top: 520,
+                right: -1904,
+                bottom: 536,
+            },
+        ] {
+            let point = anchored_position(work, Some(anchor), 496, 419, 8);
+            assert_eq!(point.x, -1912);
+            assert!(point.y >= 48 && point.y + 419 <= 1072);
+        }
+    }
+
+    #[test]
+    fn missing_tray_anchor_uses_the_chosen_monitor_work_area() {
+        let work = RECT {
+            left: 1920,
+            top: -1080,
+            right: 3840,
+            bottom: 0,
+        };
+        let point = anchored_position(work, None, 496, 419, 8);
+        assert_eq!((point.x, point.y), (3336, -427));
     }
 }

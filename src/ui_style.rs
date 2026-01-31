@@ -58,14 +58,6 @@ impl Theme {
     pub fn s(&self, n: i32) -> i32 {
         n * self.dpi as i32 / 96
     }
-    pub fn rect(&self, x: i32, y: i32, w: i32, h: i32) -> RECT {
-        RECT {
-            left: self.s(x),
-            top: self.s(y),
-            right: self.s(x + w),
-            bottom: self.s(y + h),
-        }
-    }
     pub fn caption(hwnd: HWND) {
         let corner = DWMWCP_ROUND;
         // Windows 10 may reject optional Windows 11 attributes; ordinary native
