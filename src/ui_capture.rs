@@ -213,7 +213,13 @@ pub fn palette_probe(parent: HWND, controls: &[(u16, HWND)]) -> serde_json::Valu
     }
     serde_json::json!(results)
 }
-pub fn save_client(hwnd: HWND, path: &Path, palette: serde_json::Value) -> Result<(), String> {
+pub fn save_client(
+    hwnd: HWND,
+    path: &Path,
+    palette: serde_json::Value,
+    menu_probe: Result<serde_json::Value, String>,
+) -> Result<(), String> {
+    let menu_probe = menu_probe?;
     unsafe {
         let mut r = RECT::default();
         GetClientRect(hwnd, &mut r);
@@ -286,7 +292,7 @@ pub fn save_client(hwnd: HWND, path: &Path, palette: serde_json::Value) -> Resul
         writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
         writer.finish().map_err(|e| e.to_string())?;
         usb_eject::settings::replace(&temp, path).map_err(|e| e.to_string())?;
-        fs::write(path.with_extension("capture.json"), serde_json::to_vec_pretty(&serde_json::json!({"client_width":w,"client_height":h,"native_caption":GetWindowLongPtrW(hwnd,GWL_STYLE)as u32 & WS_CAPTION == WS_CAPTION,"backend":"Native GDI PrintWindow client capture","fonts":fonts,"reentrant_palette":palette})).unwrap()).map_err(|e|e.to_string())
+        fs::write(path.with_extension("capture.json"), serde_json::to_vec_pretty(&serde_json::json!({"client_width":w,"client_height":h,"native_caption":GetWindowLongPtrW(hwnd,GWL_STYLE)as u32 & WS_CAPTION == WS_CAPTION,"backend":"Native GDI PrintWindow client capture","fonts":fonts,"reentrant_palette":palette,"menu_dispatch_probe":menu_probe})).unwrap()).map_err(|e|e.to_string())
     }
 }
 

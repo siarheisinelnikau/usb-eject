@@ -30,6 +30,7 @@ foreach ($Screen in @('empty', 'sample', 'error', 'settings', 'details')) {
     foreach ($Case in @('under_state_borrow','outside_state_borrow')) {
         if ($CaptureMetadata.reentrant_palette.$Case | Where-Object { $_.background -ne 16777215 -or -not $_.brush_available }) { throw "Reentrant palette regression: $Screen / $Case" }
     }
+    if (-not $CaptureMetadata.menu_dispatch_probe.controller_reentrant -or -not $CaptureMetadata.menu_dispatch_probe.borrowed_entry_rejected -or $CaptureMetadata.menu_dispatch_probe.new_deferrals -ne 0) { throw "Nested menu-dispatch regression: $Screen" }
 }
 $ScaledPath = Join-Path $OutputRoot 'sample-150.png'
 Invoke-BoundedDiagnostic @('--capture', $ScaledPath, '--screen', 'sample', '--scale', '150') 12000
