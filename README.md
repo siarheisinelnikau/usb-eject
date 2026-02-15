@@ -2,11 +2,11 @@
 
 A small native Windows tray utility for reviewing and safely ejecting an external physical drive and all its volumes. Independent MIT-licensed implementation with original UI and artwork; no affiliation with USB Safely Remove.
 
-**Status: v0.1.2 local preview.** The main interaction is a compact tray panel, with separate Settings and Drive details windows. This revision enlarges the tray artwork, simplifies the eject symbol and supplies native icon sizes instead of shrinking a single 32-pixel image. The actual native interface and embedded icons have been captured and reviewed without Computer Use. Real device ejection, physical tray clicks and update installation still need manual validation. No repository or release has been published by this development session.
+**Status: v0.1.3 local preview.** The main interaction is a compact tray panel with separate Settings and Drive details windows. This revision removes duplicated panel controls, fixes the reentrant menu redraw path and places secondary windows near the tray. Native screenshots, callback probes and bounded rendering checks were completed without Computer Use. Physical tray/menu clicks, mixed-monitor interaction, real device ejection and update installation still need manual validation. No repository or release has been published by this development session.
 
 ## Capabilities
 
-- A compact native tray panel with selectable drive cards, a short menu and a discoverable **More → Quit UsbEject** action. Settings and less frequent drive diagnostics open separately. Manual launch opens the panel; `--background` starts quietly in the tray. No WebView or application GPU renderer.
+- A compact native tray panel focused on external drives and the selected drive's actions. Right-click the tray icon for **Settings**, **Refresh drives** and **Quit UsbEject**. Settings and drive diagnostics open near the same tray anchor. Manual launch opens the panel; `--background` starts quietly in the tray. No WebView or application GPU renderer.
 - A physical-device list with Windows names, local display aliases, bus, serial, drive letters, mounted folders and volume labels. Each volume shows capacity/free space when Windows supplies it. Physical capacity may be `Unknown` without sufficient query access.
 - USB, FireWire, SD and MMC storage candidates. Internal SATA/NVMe, virtual/network disks and the disk containing Windows are excluded. Ejection is disabled if the Windows disk cannot be identified, hot-plug metadata is unavailable, a volume spans disks, or multiple discovered disks share the same direct device parent.
 - Explicitly select a drive, then choose **Safely eject**. A scan never automatically selects a new drive. Discovery and identity validation repeat before the supported Windows PnP removal request. Display labels never rename a filesystem volume.
@@ -28,7 +28,7 @@ Omit `-Offline` when dependencies need to be fetched. Both scripts use a reposit
 
 Output in `dist/`:
 
-- `UsbEject-v0.1.2.exe` — the single Windows x64 executable.
+- `UsbEject-v0.1.3.exe` — the single Windows x64 executable.
 - `SHA256SUMS`, `LICENSE`, `THIRD-PARTY-NOTICES.txt`, `build-info.json`, `inspection.json`.
 
 The filename intentionally has no architecture suffix while only one executable architecture is distributed. Keep license notices with redistributed copies. The CI workflow builds review artifacts only; it does not publish GitHub Releases.
@@ -40,7 +40,7 @@ The filename intentionally has no architecture suffix while only one executable 
 3. Wait for Windows to accept removal before unplugging. A refusal means you should resolve the reported cause and retry. Cancellation can stop preparation; an active Windows ejection call cannot be interrupted or undone.
 4. If a file seems busy, open **Details**, enter its existing full path under **Inspect a busy file**, then choose **Inspect file**. Only files on that device's mounted paths are accepted. An empty result does not prove the device is unused.
 5. In **Details**, set a local **Display label** and choose **Save label**. An empty value restores the Windows name. Devices without unique serials can share a Windows identity, or change identity between ports; aliases are cosmetic.
-6. Clicking away, pressing Escape or closing the panel keeps UsbEject in the tray. Open **Settings** deliberately for update preferences. Use **More → Quit UsbEject**, the tray menu's Quit action, or **Ctrl+Q** to exit. If creating the tray icon fails, closing the panel exits instead.
+6. Right-click the tray icon for **Settings**, **Refresh drives** or **Quit UsbEject**. The panel also accepts a right-click or Shift+F10 context menu; **Ctrl+,** opens Settings, **F5** refreshes and **Ctrl+Q** exits. Clicking away, Escape and the panel's × hide it in the tray. If creating the tray icon fails, closing the panel exits instead.
 
 When switching from an older portable preview, quit that running instance before opening the new EXE. The single-instance behavior otherwise restores the already-running version.
 
@@ -73,15 +73,15 @@ Native icon resource proof at actual pixel sizes, drawn by Windows `DrawIconEx`.
 
 ![UsbEject compact tray panel with two sample drives and the selected drive action](docs/screenshots/panel-sample.png)
 
-Compact panel, selected sample drive, 100% scale. Selection is explicit in ordinary use; the fixture selects its first sample to show the action state.
+Compact 380 × 320 panel, selected sample drive, 100% scale. Settings, More, Refresh and the tray-status footer have been removed from the panel. Selection is explicit in ordinary use; the fixture selects its first sample to show the action state.
 
 ![UsbEject compact tray panel with no external drives](docs/screenshots/panel-empty.png)
 
-Simplified empty state, 100% scale. Native background colors are also checked during reentrant Windows callbacks; a fresh PrintWindow screenshot alone would miss that regression.
+Compact 380 × 180 empty state, 100% scale. Native background colors are also checked during reentrant Windows callbacks; a fresh PrintWindow screenshot alone would miss that regression.
 
 ![UsbEject separate settings window showing version and startup update preference](docs/screenshots/settings.png)
 
-Separate Settings window with startup checks disabled in the fixture, 100% scale.
+Separate 480 × 380 Settings client with startup checks disabled in the fixture, 100% scale. Its status scrollbar appears only when needed. These client captures do not establish on-desktop placement.
 
 ![UsbEject busy-drive result with guidance to inspect a file](docs/screenshots/panel-error.png)
 
@@ -93,7 +93,7 @@ Synthetic Windows-refusal state, 100% scale. No removal request was made to obta
 ./scripts/capture.ps1 -OutputRoot E:/work/github/usb-eject/.test-output/visual-review -Measure
 ```
 
-Build the release target first. This explicitly launches disposable diagnostic instances, writes native client PNGs for empty/populated/error/settings/details states plus 150% scale, verifies embedded icon sizes, and exits. It never activates a normal running instance or performs device/network/settings operations. Fresh output paths are required. `--capture OUTPUT.png --screen SCREEN --scale 100|150|200` is the executable's developer-only render/save/exit mode; `--screen icons` instead renders native icon resources at their actual sizes, checks their alpha bounds and the tray metric, and exits without creating an application window. `--measure OUTPUT.json [--screen settings]` records bounded visible, hidden and restored idle intervals. The review script also checks native color callbacks while application state is borrowed and rejects unexpected scene work in settled samples. Local native-checkbox backdrop requests are measured separately; they do not rebuild the Settings scene. These are not ordinary settings or a substitute for physical tray, keyboard or hardware checks. Additional reviewed captures: [drive details](docs/screenshots/drive-details.png) and [panel at 150%](docs/screenshots/panel-150.png).
+Build the release target first. This explicitly launches disposable diagnostic instances, writes native client PNGs for empty/populated/error/settings/details states plus 150% scale, verifies embedded icon sizes, and exits. It never activates a normal running instance or performs device/network/settings operations. Fresh output paths are required. `--capture OUTPUT.png --screen SCREEN --scale 100|150|200` is the executable's developer-only render/save/exit mode; `--screen icons` instead renders native icon resources at their actual sizes, checks their alpha bounds and the tray metric, and exits without creating an application window. `--measure OUTPUT.json [--screen settings]` records bounded visible, hidden and restored idle intervals. The review script checks native colors during controller mutation, native owner-draw callbacks inside the production menu-dispatch scope, coalescing of reentrant draw requests and unexpected settled scene work. The menu probe does not open an OS popup or simulate input. Local native-checkbox backdrop requests are measured separately; they do not rebuild the Settings scene. These are not ordinary settings or a substitute for physical tray, keyboard or hardware checks. Additional reviewed captures: [drive details](docs/screenshots/drive-details.png) and [panel at 150%](docs/screenshots/panel-150.png).
 
 ## License
 

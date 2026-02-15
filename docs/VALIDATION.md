@@ -1,5 +1,28 @@
 # Local validation record
 
+## v0.1.3 — popup redraw loop, excess UI and misplaced Settings
+
+Source inspection found that `App::tray_menu` held `APP`'s mutable borrow throughout `TrackPopupMenu`. Windows' nested dispatch could then fail to enter the owner-draw handler; that fallback posted another redraw message, whose invalidation generated more callbacks while the same borrow remained active. The known unsafe loop was removed before diagnostic launching. No interactive reproduction of that old busy path was attempted.
+
+The production menu dispatcher now starts before controller borrowing and rejects borrowed/reentrant entry. Reentrant draw requests mark one pending bit per window and flush after the borrow ends; they do not post recurring redraw messages. Settings and Details use the same tray-anchor/work-area placement as the panel. Three geometry regressions check common bottom-right alignment, negative-coordinate top/left monitor edges and missing-icon fallback. These tests do not establish real OS activation or mixed-monitor interaction.
+
+The panel no longer has Settings/More/Refresh buttons, a slogan, repeated section/count or a tray-status footer. Its empty client is **380 × 180**, compared with 440 × 344 in 0.1.2. The two-drive client is **380 × 320**, compared with 440 × 476. A longer refusal grows to 380 × 352 so the result remains visible. Settings is **480 × 380** and hides its status scrollbar when all text fits. Fresh captures of empty/sample/refusal/Settings/Details/150% states and embedded icons were inspected.
+
+Final checks against the packaged optimized x64 0.1.3 executable:
+
+- Formatting, Clippy with denied source warnings, all 17 existing fixture tests and three new placement tests passed. The toolchain reported a non-fatal incremental-cache hard-link fallback. Package PE/version/manifest/dependency/checksum inspection passed.
+- Each standard client capture exercised a real native owner-draw callback inside the production menu-dispatch guard. It completed one draw with no new deferral, rejected entry while controller state was borrowed, coalesced three deliberately reentrant draw requests into one pending window and reset the menu scope. Palette probes also passed during and outside state borrowing. This integration probe opens no OS popup and injects no mouse/keyboard input; it does not certify a physical menu click.
+- Both bounded measurement processes exited successfully. Every settled phase below added **0 layouts, 0 ordinary paints, 0 owner-draw calls, 0 scene print requests and 0 native-checkbox backdrops**. Process CPU did not measurably increase at Windows' sampled process-time resolution. Startup, deliberate capture probes and useful restore work are outside these settled samples.
+
+| Surface | Visible idle | Hidden with fixture update | Restored idle |
+| --- | --- | --- | --- |
+| Panel | 4.999 s | 4.996 s | 5.003 s |
+| Settings | 5.024 s | 5.010 s | 5.027 s |
+
+Backend remains native CPU GDI with a blocking `GetMessageW` loop. Windows desktop composition remains enabled; GPU/presentation telemetry was not collected. No Computer Use, actual tray/menu click, user settings/network operation, real ejection or update installation was performed. Physical menu dismissal/focus, window placement on the user's desktop and mixed-monitor behavior remain manual checks.
+
+Evidence: [menu-dispatch probes](validation/menu-dispatch-v0.1.3.json), [panel load](validation/panel-load-v0.1.3.json), [Settings load](validation/settings-load-v0.1.3.json), [native icons](validation/icons-v0.1.3.json), [capture/package identity](screenshots/captures.json).
+
 ## v0.1.2 — undersized notification icon
 
 The supplied notification-area screenshot showed a small, narrow mark relative to neighboring icons. The previous source left 5–6 transparent columns around its only 32-pixel image: its 22 × 24 footprint became approximately 11 × 12 pixels at the standard 16-pixel tray size. The replacement fills 14 × 14 pixels at 16 pixels, with a larger white eject symbol and the interface's teal accent. Eight individually rasterized native sizes are embedded. The tray loads `LoadIconMetric(LIM_SMALL)` rather than sharing the panel's fixed 32-pixel icon.
