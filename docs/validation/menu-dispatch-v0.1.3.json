@@ -1,0 +1,77 @@
+{
+  "version": "0.1.3",
+  "executableSha256": "19ff13442608132c9c05d40d57ed93ddf0381cfa9a42bf054e73f94e9459ce23",
+  "fixture": "Isolated native client capture; no OS popup, injected input, user settings, network or device I/O",
+  "screens": [
+    {
+      "screen": "empty",
+      "clientWidth": 380,
+      "clientHeight": 180,
+      "menuDispatch": {
+        "borrowed_entry_rejected": true,
+        "controller_reentrant": true,
+        "menu_flag_cleared": true,
+        "new_deferrals": 0,
+        "owner_draws": 1,
+        "reentrant_requests_coalesced": 3,
+        "scope": "Real owner-draw callback inside the production menu-dispatch scope; no OS popup or user input"
+      }
+    },
+    {
+      "screen": "sample",
+      "clientWidth": 380,
+      "clientHeight": 320,
+      "menuDispatch": {
+        "borrowed_entry_rejected": true,
+        "controller_reentrant": true,
+        "menu_flag_cleared": true,
+        "new_deferrals": 0,
+        "owner_draws": 1,
+        "reentrant_requests_coalesced": 3,
+        "scope": "Real owner-draw callback inside the production menu-dispatch scope; no OS popup or user input"
+      }
+    },
+    {
+      "screen": "error",
+      "clientWidth": 380,
+      "clientHeight": 352,
+      "menuDispatch": {
+        "borrowed_entry_rejected": true,
+        "controller_reentrant": true,
+        "menu_flag_cleared": true,
+        "new_deferrals": 0,
+        "owner_draws": 1,
+        "reentrant_requests_coalesced": 3,
+        "scope": "Real owner-draw callback inside the production menu-dispatch scope; no OS popup or user input"
+      }
+    },
+    {
+      "screen": "settings",
+      "clientWidth": 480,
+      "clientHeight": 380,
+      "menuDispatch": {
+        "borrowed_entry_rejected": true,
+        "controller_reentrant": true,
+        "menu_flag_cleared": true,
+        "new_deferrals": 0,
+        "owner_draws": 1,
+        "reentrant_requests_coalesced": 3,
+        "scope": "Real owner-draw callback inside the production menu-dispatch scope; no OS popup or user input"
+      }
+    },
+    {
+      "screen": "details",
+      "clientWidth": 620,
+      "clientHeight": 640,
+      "menuDispatch": {
+        "borrowed_entry_rejected": true,
+        "controller_reentrant": true,
+        "menu_flag_cleared": true,
+        "new_deferrals": 0,
+        "owner_draws": 1,
+        "reentrant_requests_coalesced": 3,
+        "scope": "Real owner-draw callback inside the production menu-dispatch scope; no OS popup or user input"
+      }
+    }
+  ]
+}

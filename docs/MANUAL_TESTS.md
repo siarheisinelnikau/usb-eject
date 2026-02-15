@@ -6,8 +6,10 @@ The native client screenshots, bounded idle/hidden diagnostics and fixture tests
 
 - Inspect main view and settings at 100%, 125%, 150% and 200% DPI, including changing monitors. Check text clipping, selection, long names, keyboard navigation and screen-reader labels.
 - Close X, reopen by a single tray click and by Open. Repeat when minimized/hidden; verify foreground behavior and that Quit removes the icon/process.
+- Open and dismiss the tray context menu repeatedly with the panel visible and hidden. Check that native painting, worker completions and hot-plug refresh remain responsive, with no flicker or repaint loop. Check panel right-click, Shift+F10, Ctrl+, and F5.
+- Open Settings and Details from a bottom-right tray icon. They should appear near that anchor, on its monitor and inside the work area. Repeat with top/side taskbars and mixed monitor DPI. The saved client screenshots do not cover this placement or activation.
 - Launch twice and verify the same PID/window is restored. Restart Explorer and verify the tray icon returns. Test the documented close behavior when tray creation fails.
-- Measure release-build CPU at idle visible and hidden, plus refresh latency and window responsiveness during slow device/network calls. No runtime performance claim has been measured yet.
+- Extend the recorded bounded idle/hidden measurements with real refresh latency, menu interaction and window responsiveness during slow device/network calls. GPU/presentation timing remains unmeasured.
 - Review the application-generated panel and Settings PNGs in README. Capture OS chrome/tray evidence later only if it adds useful coverage beyond these actual client screenshots.
 
 ## Device discovery and identity
