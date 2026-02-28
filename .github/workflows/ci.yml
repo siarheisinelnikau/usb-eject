@@ -17,6 +17,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Require the shared updater sibling checkout
+        run: |
+          if (-not (Test-Path -LiteralPath ../rust-auto-updator/crates/rust-auto-updator/Cargo.toml)) {
+            throw 'Provision rust-auto-updator beside this repository before verification. The shared crate is currently a local dependency; no remote source has been published.'
+          }
       - name: Install the stable Rust toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - name: Format, lint and test isolated fixtures

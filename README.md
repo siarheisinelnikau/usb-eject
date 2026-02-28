@@ -15,7 +15,7 @@ A small native Windows tray utility for reviewing and safely ejecting an externa
 
 ## Build and package
 
-Target: Windows 10 1809+ / Windows 11, **x64**. These are intended runtime targets, not a completed compatibility certification. Build prerequisites: stable Rust with the MSVC toolchain, Visual Studio C++ Build Tools and a Windows SDK including `rc.exe`. No extra runtime, driver, service, administrator prompt or installation is intended. CRT linkage is static for the supported target.
+Target: Windows 10 1809+ / Windows 11, **x64**. These are intended runtime targets, not a completed compatibility certification. Build prerequisites: Rust 1.95 or newer with the MSVC toolchain, Visual Studio C++ Build Tools and a Windows SDK including `rc.exe`. No extra runtime, driver, service, administrator prompt or installation is intended. CRT linkage is static for the supported target.
 
 From this repository in PowerShell:
 
@@ -24,7 +24,7 @@ From this repository in PowerShell:
 ./scripts/package.ps1 -Offline
 ```
 
-Omit `-Offline` when dependencies need to be fetched. Both scripts use a repository-local `target` and at most two Cargo jobs. Verification runs formatting, Clippy with warnings denied and fixture tests; it never launches the GUI or ejects devices. Packaging compiles resources and a release binary without starting it.
+Keep `rust-auto-updator` beside this repository at `../rust-auto-updator/crates/rust-auto-updator`. It is a local path dependency; standalone CI checkouts must provision the same sibling before verification. This session does not publish the shared source. Omit `-Offline` when dependencies need to be fetched. Both scripts use a repository-local `target` and at most two Cargo jobs. Verification runs formatting, Clippy with warnings denied and fixture tests; it never launches the GUI or ejects devices. Packaging compiles resources and a release binary without starting it.
 
 Output in `dist/`:
 
@@ -52,7 +52,11 @@ The separate **Settings** window shows the installed version and startup-check t
 
 The planned canonical source is [siarheisinelnikau/usb-eject](https://github.com/siarheisinelnikau/usb-eject). Until the repository and a compatible release exist, checks report the source as unavailable. A 404, rate limit or network failure is never presented as “up to date.” Stable releases must include `UsbEject-vVERSION.exe` and a `SHA256SUMS` entry for that exact filename. See [release preparation](docs/RELEASING.md).
 
-**Download and install** is explicit consent to download, verify, close UsbEject, replace its EXE and restart it. It never runs unattended from a startup check. Cancellation ends once verified installation handoff begins. The helper waits for the old process to exit, retains an executable backup beside the installation and leaves settings in their own data directory. It attempts rollback if creating the restarted process fails; it does not detect later crashes in an already-started new version. Installation into a protected folder fails without requesting elevation. Staging files and backup EXEs can be removed manually once the updated version is confirmed to work. Checksums authenticate integrity against the canonical HTTPS release; releases are not code-signed yet.
+**Download and install** is explicit consent to download, verify, close UsbEject, replace its EXE and restart it. Startup checks never download or install. The shared `rust-auto-updator` core owns HTTPS, release selection, size/SHA-256/PE validation, progress, cancellation, replacement and rollback. The product adapter preserves `UsbEject-vVERSION.exe`, the existing `SHA256SUMS` manifest and saved startup preference. Cancellation ends after verified handoff begins.
+
+A unique `.usb-eject-update-*` staging folder is reserved beside the portable EXE; the folder must be writable and no elevation is requested. The helper verifies the old process/installed hash, waits for exit, retains a backup during replacement, and restarts. A failed launch restores and attempts to restart the old executable. Successful host startup acknowledges installation and cleans the validated staging files. Settings remain in their own data directory. A small adapter also recognizes the old `--apply-update PID DESTINATION SHA256` invocation, validates its historical app-owned staging root/name, and delegates installation to the shared core, preserving updates initiated by pre-extraction releases. Legacy staging files are retained for manual cleanup.
+
+Checksums establish integrity against the canonical HTTPS release; releases are not code-signed yet. Full network/install/restart, tray interaction and visible/hidden runtime performance remain unverified in the current code-only pass. The native packaged icons can be checked without starting the app using `scripts/inspect-icons.ps1 -ExecutablePath dist/UsbEject-v0.1.3.exe -ResourceId 1`; this saves a resource proof, not an OS tray screenshot.
 
 ## Limits and verification
 
