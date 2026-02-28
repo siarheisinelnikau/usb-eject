@@ -68,7 +68,7 @@ enum DiskCommand {
 }
 enum NetCommand {
     Check,
-    Install(Available),
+    Install(Box<Available>),
 }
 enum Event {
     Initialized(Result<Settings, String>, Option<String>),
@@ -156,24 +156,16 @@ fn workers(
             let event = match job {
                 NetCommand::Check => Event::Checked(update::check()),
                 NetCommand::Install(available) => {
-                    let result = settings::data_dir()
-                        .and_then(|p| {
-                            update::download(
-                                &available,
-                                &p.join("updates"),
-                                &net_cancel,
-                                |done, total| {
-                                    send_event(&events, hwnd, Event::Progress(done, total))
-                                },
-                            )
-                        })
-                        .and_then(|(path, checksum)| {
-                            if net_cancel.load(Ordering::Acquire) {
-                                return Err("Update cancelled before installation".into());
-                            }
-                            send_event(&events, hwnd, Event::Handoff);
-                            installer::launch(&path, &checksum)
-                        });
+                    let result = update::download(&available, &net_cancel, |done, total| {
+                        send_event(&events, hwnd, Event::Progress(done, total))
+                    })
+                    .and_then(|mut prepared| {
+                        if net_cancel.load(Ordering::Acquire) {
+                            return Err("Update cancelled before installation".into());
+                        }
+                        send_event(&events, hwnd, Event::Handoff);
+                        rust_auto_updator::handoff(&mut prepared)
+                    });
                     Event::Installed(result)
                 }
             };
@@ -593,7 +585,11 @@ impl App {
             INSTALL if !self.net_busy && !self.disk_busy && !self.saving => {
                 if let Some(available) = self.available.clone() {
                     self.net_cancel.store(false, Ordering::Release);
-                    if self.net.try_send(NetCommand::Install(available)).is_ok() {
+                    if self
+                        .net
+                        .try_send(NetCommand::Install(Box::new(available)))
+                        .is_ok()
+                    {
                         self.net_busy = true;
                         self.installing = true;
                         self.text(204, "Downloading verified update. UsbEject will close and restart after installation. Settings and display labels are preserved.");
@@ -2237,6 +2233,9 @@ pub fn run() {
         }
         app.resize_panel();
         let diagnostic = app.diagnostic.clone();
+        if diagnostic.is_none() {
+            installer::cleanup_after_start();
+        }
         APP.with(|state| *state.borrow_mut() = Some(app));
         if let Some(options) = diagnostic {
             if options.measure {

@@ -34,14 +34,13 @@ Developer-only `--capture` and `--measure` modes bypass the ordinary instance mu
 
 Settings initialization/save occurs on the storage worker. The startup update command is enqueued only after valid settings load and only when the persistent setting is enabled. A corrupt file is not silently reset or overwritten. User aliases do not affect matching/ejection identity.
 
-## Update protocol
+## Updates
 
-1. An unauthenticated HTTPS request reads the canonical repository's latest published stable release. Semantic versions, release channel, exact asset names, sizes and canonical download URLs are checked.
-2. A user click starts a bounded-size download to a fresh app-owned directory. Truncated/oversized downloads, I/O errors and cancellation abort staging. `SHA256SUMS` must contain a unique exact-name entry. The staged file must hash correctly and have a Windows x64 PE header.
-3. The staged executable starts itself as a helper with argument arrays, never shell-built commands. It checks its staging path, filename/version, checksum and the parent process's actual executable path. It opens a synchronization handle to that parent and signals readiness before the old UI exits.
-4. After parent exit, the helper verifies the old executable has not changed, creates an exclusive backup and incoming copy, verifies the copy and replaces the destination. It restarts the application. A process-creation failure attempts to restore and launch the old executable; a later crash of a successfully created process is not automatically detected. Settings are outside the executable directory and are untouched. An app-owned update receipt is shown on subsequent launches.
+`update.rs` contains only the product's repository/version/asset/checksum configuration and adapters to the shared sibling `rust-auto-updator` core. The existing bounded network worker calls the shared cancellation-aware download path; UI progress and completion still arrive through `PostMessageW`. Startup requests are enqueued only after valid settings load and only when the saved preference permits them. Downloads and installation require the explicit action.
 
-This requires a user-writable portable installation folder and compatible helper protocol in future versions. Downloads/checksums rely on GitHub HTTPS and repository control, not an independent signature authority. No check or installation is performed by build scripts or tests. Full update/restart and rollback validation is deferred.
+`windows/installer.rs` routes the shared helper protocol before singleton/UI initialization. Successful normal startup acknowledges installation and schedules validated shared cleanup. For pre-extraction releases, it validates the downloaded executable's historical settings-directory staging root and `UsbEject-vVERSION.exe` name, translates `--apply-update PID TARGET SHA` and delegates verification/replacement/restart to the same shared core, including the old readiness marker. No duplicated network or executable-replacement implementation remains in this repository.
+
+The core stages beside the installed EXE, uses Windows certificate-store TLS, verifies canonical assets, size, SHA-256 and architecture/PE data, validates the original process and installed hash, waits for exit, replaces with a backup and restarts. Launch failure restores and attempts to restart the previous image. The host's data directory remains separate. A writable executable directory is required; no elevation is requested. End-to-end network/install/restart remains pending and no updater is executed during this code-only pass.
 
 ## Primary references
 
