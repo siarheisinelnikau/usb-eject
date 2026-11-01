@@ -146,7 +146,7 @@ pub fn write_measurement(
     events: &[PaintEvent],
     draws: &[DrawEvent],
 ) -> Result<(), String> {
-    let phases:Vec<_>=samples.chunks_exact(2).enumerate().map(|(index,pair)|{
+    let phases:Vec<_>=samples.as_chunks::<2>().0.iter().enumerate().map(|(index,pair)|{
         let a=&pair[0];let b=&pair[1];let seconds=(b.wall_ms-a.wall_ms)as f64/1000.;
         let cpu=(b.cpu_100ns-a.cpu_100ns)as f64/10_000_000.;
         let paint:u64=b.metrics.paints.iter().zip(a.metrics.paints).map(|(b,a)|b-a).sum();
@@ -288,7 +288,7 @@ pub fn save_client(
         GdiFlush();
         let raw = std::slice::from_raw_parts(pixels.cast::<u8>(), (w * h * 4) as usize);
         let mut rgba = Vec::with_capacity(raw.len());
-        for pixel in raw.chunks_exact(4) {
+        for pixel in raw.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
         }
         SelectObject(memory, old);
@@ -485,8 +485,9 @@ pub fn save_icons(instance: HINSTANCE, path: &Path) -> Result<(), String> {
             }
             GdiFlush();
             let mut rgba = Vec::with_capacity(400 * 176 * 4);
-            for pixel in
-                std::slice::from_raw_parts(pixels.cast::<u8>(), 400 * 176 * 4).chunks_exact(4)
+            for pixel in std::slice::from_raw_parts(pixels.cast::<u8>(), 400 * 176 * 4)
+                .as_chunks::<4>()
+                .0
             {
                 rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
             }
