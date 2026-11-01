@@ -17,6 +17,43 @@ pub const SURFACE: COLORREF = rgb(245, 247, 249);
 pub const LINE: COLORREF = rgb(225, 231, 236);
 pub const WHITE: COLORREF = rgb(255, 255, 255);
 
+// Palette reads must remain reentrant: Windows requests control backgrounds while App is borrowed.
+static DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn is_dark() -> bool {
+    DARK.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub fn set_dark(value: bool) {
+    DARK.store(value, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn ink() -> COLORREF {
+    if is_dark() { rgb(231, 237, 242) } else { INK }
+}
+pub fn muted() -> COLORREF {
+    if is_dark() { rgb(170, 184, 196) } else { MUTED }
+}
+pub fn accent() -> COLORREF {
+    if is_dark() { rgb(24, 116, 103) } else { ACCENT }
+}
+pub fn tint() -> COLORREF {
+    if is_dark() { rgb(29, 66, 62) } else { TINT }
+}
+pub fn surface() -> COLORREF {
+    if is_dark() { rgb(37, 47, 57) } else { SURFACE }
+}
+pub fn line() -> COLORREF {
+    if is_dark() { rgb(69, 83, 96) } else { LINE }
+}
+pub fn background() -> COLORREF {
+    if is_dark() { rgb(24, 32, 41) } else { WHITE }
+}
+pub fn background_brush() -> HBRUSH {
+    if !is_dark() {
+        return unsafe { GetStockObject(WHITE_BRUSH) };
+    }
+    static BRUSH: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BRUSH.get_or_init(|| unsafe { CreateSolidBrush(rgb(24, 32, 41)) as usize }) as HBRUSH
+}
+
 pub struct Theme {
     pub dpi: u32,
     pub normal: HFONT,
@@ -52,7 +89,7 @@ impl Theme {
             title: font(25, 600),
             heading: font(16, 500),
             small: font(13, 400),
-            white: unsafe { CreateSolidBrush(WHITE) },
+            white: unsafe { CreateSolidBrush(background()) },
         }
     }
     pub fn s(&self, n: i32) -> i32 {
@@ -60,6 +97,8 @@ impl Theme {
     }
     pub fn caption(hwnd: HWND) {
         let corner = DWMWCP_ROUND;
+        let caption_color = background();
+        let dark = is_dark() as i32;
         // Windows 10 may reject optional Windows 11 attributes; ordinary native
         // non-client rendering remains available in that case.
         unsafe {
@@ -71,8 +110,14 @@ impl Theme {
             );
             DwmSetWindowAttribute(
                 hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                (&dark as *const i32).cast(),
+                4,
+            );
+            DwmSetWindowAttribute(
+                hwnd,
                 DWMWA_CAPTION_COLOR as u32,
-                (&WHITE as *const u32).cast(),
+                (&caption_color as *const u32).cast(),
                 4,
             );
         }
@@ -81,27 +126,27 @@ impl Theme {
         let disabled = item.itemState & ODS_DISABLED != 0;
         let pressed = item.itemState & ODS_SELECTED != 0;
         let fill = if disabled {
-            SURFACE
+            surface()
         } else if primary {
-            if pressed { rgb(10, 91, 80) } else { ACCENT }
+            if pressed { rgb(10, 91, 80) } else { accent() }
         } else if pressed {
-            TINT
+            tint()
         } else {
-            SURFACE
+            surface()
         };
         let foreground = if disabled {
             rgb(155, 165, 174)
         } else if primary {
-            WHITE
+            rgb(255, 255, 255)
         } else {
-            INK
+            ink()
         };
         rounded(
             item.hDC,
             item.rcItem,
             self.s(9),
             fill,
-            if primary && !disabled { fill } else { LINE },
+            if primary && !disabled { fill } else { line() },
         );
         text_at(
             item.hDC,
@@ -179,7 +224,7 @@ pub fn text_at(dc: HDC, font: HFONT, value: &str, mut rect: RECT, color: COLORRE
 }
 pub fn separator(dc: HDC, y: i32, width: i32) {
     unsafe {
-        let pen = CreatePen(PS_SOLID, 1, LINE);
+        let pen = CreatePen(PS_SOLID, 1, line());
         let old = SelectObject(dc, pen);
         MoveToEx(dc, 0, y, std::ptr::null_mut());
         LineTo(dc, width, y);

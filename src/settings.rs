@@ -1,3 +1,4 @@
+use crate::i18n::Language;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -5,12 +6,22 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorTheme {
+    #[default]
+    Light,
+    Dark,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub schema: u32,
     pub check_updates_on_startup: bool,
     pub aliases: BTreeMap<String, String>,
+    pub language: Language,
+    pub theme: ColorTheme,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -18,6 +29,8 @@ impl Default for Settings {
             schema: 1,
             check_updates_on_startup: true,
             aliases: BTreeMap::new(),
+            language: Language::English,
+            theme: ColorTheme::Light,
         }
     }
 }
@@ -95,6 +108,31 @@ pub fn replace(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_settings_and_appearance_roundtrip_preserve_user_preferences() {
+        let legacy =
+            r#"{"schema":1,"check_updates_on_startup":false,"aliases":{"USB-device":"Archive"}}"#;
+        let loaded: Settings = serde_json::from_str(legacy).unwrap();
+        assert!(!loaded.check_updates_on_startup);
+        assert_eq!(loaded.aliases["USB-device"], "Archive");
+        assert_eq!(loaded.language, Language::English);
+        assert_eq!(loaded.theme, ColorTheme::Light);
+        for language in Language::ALL {
+            for theme in [ColorTheme::Light, ColorTheme::Dark] {
+                let settings = Settings {
+                    language,
+                    theme,
+                    ..loaded.clone()
+                };
+                let roundtrip: Settings =
+                    serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+                assert_eq!(roundtrip.language, language);
+                assert_eq!(roundtrip.theme, theme);
+                assert_eq!(roundtrip.aliases["USB-device"], "Archive");
+                assert!(!roundtrip.check_updates_on_startup);
+            }
+        }
+    }
     #[test]
     fn settings_roundtrip_and_corrupt_file_preservation() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
