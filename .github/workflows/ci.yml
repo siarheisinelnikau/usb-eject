@@ -37,3 +37,32 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+
+  localization-release:
+    name: Publish the explicitly requested localization release
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release localization v')
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: localization-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: UsbEject-windows-x64-review-build
+          path: .release-input
+      - name: Verify the checked executable, companion and notices
+        shell: pwsh
+        run: ./scripts/stage-localization-release.ps1
+      - name: Publish only after every asset is verified
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const publish = require('./scripts/publish-localization-release.cjs');
+            await publish({github, context, core});
