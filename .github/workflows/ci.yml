@@ -17,6 +17,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Provision shared updater source
+        shell: pwsh
+        run: ./scripts/provision-shared-updater.ps1
       - name: Require the shared updater sibling checkout
         run: |
           if (-not (Test-Path -LiteralPath ../rust-auto-updator/crates/rust-auto-updator/Cargo.toml)) {
