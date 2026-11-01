@@ -1,0 +1,31 @@
+{
+  "importedDlls": [
+    "advapi32.dll",
+    "api-ms-win-core-synch-l1-2-0.dll",
+    "bcryptprimitives.dll",
+    "cfgmgr32.dll",
+    "comctl32.dll",
+    "crypt32.dll",
+    "dwmapi.dll",
+    "gdi32.dll",
+    "KERNEL32.dll",
+    "kernel32.dll",
+    "ntdll.dll",
+    "rstrtmgr.dll",
+    "secur32.dll",
+    "setupapi.dll",
+    "shell32.dll",
+    "user32.dll",
+    "uxtheme.dll",
+    "WS2_32.dll"
+  ],
+  "asset": "UsbEject-v0.2.0.exe",
+  "launched": false,
+  "executionLevel": "asInvoker",
+  "machine": "x64",
+  "sha256": "6f5b9f4bc5e1dd5e56b2423d05330f6cbf1f87552eb025a7b97ccba501c6087c",
+  "bytes": 2263552,
+  "dpiAwareness": "PerMonitorV2",
+  "subsystem": "Windows GUI",
+  "version": "0.2.0"
+}

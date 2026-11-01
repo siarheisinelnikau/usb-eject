@@ -8,6 +8,7 @@ use std::{
     ptr::null_mut,
 };
 use usb_eject::model::{Device, Identity, Volume};
+use usb_eject::{i18n::Language, settings::ColorTheme};
 use windows_sys::Win32::{
     Foundation::*, Graphics::Gdi::*, System::Threading::*, UI::WindowsAndMessaging::*,
 };
@@ -19,6 +20,8 @@ pub struct Options {
     pub screen: String,
     pub scale: u32,
     pub measure: bool,
+    pub language: Language,
+    pub theme: ColorTheme,
 }
 impl Options {
     pub fn parse() -> Result<Option<Self>, String> {
@@ -30,7 +33,7 @@ impl Options {
             return Ok(None);
         }
         if first != "--capture" && first != "--measure" {
-            return Err("Use --capture OUTPUT.png [--screen empty|sample|error|settings|details|icons] [--scale 100|150|200], --measure OUTPUT.json, or --background".into());
+            return Err("Use --capture OUTPUT.png [--screen empty|sample|error|settings|details|icons] [--scale 100|150|200] [--language en|ru|fr|de|es|it] [--theme light|dark], --measure OUTPUT.json, or --background".into());
         }
         let output = PathBuf::from(args.get(1).ok_or("Output path is required")?);
         if !output.is_absolute() {
@@ -41,6 +44,8 @@ impl Options {
             screen: "empty".into(),
             scale: 100,
             measure: first == "--measure",
+            language: Language::English,
+            theme: ColorTheme::Light,
         };
         let mut index = 2;
         while index < args.len() {
@@ -51,6 +56,17 @@ impl Options {
             match args[index].to_string_lossy().as_ref() {
                 "--screen" => result.screen = value.into_owned(),
                 "--scale" => result.scale = value.parse().map_err(|_| "Invalid scale")?,
+                "--language" => {
+                    result.language =
+                        Language::from_code(&value).ok_or("Unsupported diagnostic language")?
+                }
+                "--theme" => {
+                    result.theme = match value.as_ref() {
+                        "light" => ColorTheme::Light,
+                        "dark" => ColorTheme::Dark,
+                        _ => return Err("Unsupported diagnostic theme".into()),
+                    }
+                }
                 _ => return Err("Unknown diagnostic option".into()),
             }
             index += 2;
@@ -196,6 +212,8 @@ pub fn palette_probe(parent: HWND, controls: &[(u16, HWND)]) -> serde_json::Valu
             "STATIC" => WM_CTLCOLORSTATIC,
             "EDIT" => WM_CTLCOLOREDIT,
             "BUTTON" => WM_CTLCOLORBTN,
+            "COMBOBOX" => WM_CTLCOLORSTATIC,
+            "LISTBOX" => WM_CTLCOLORLISTBOX,
             _ => continue,
         };
         let dc = unsafe { GetDC(*control) };

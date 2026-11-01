@@ -43,6 +43,21 @@ impl Language {
     pub const fn index(self) -> usize {
         self as usize
     }
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Russian => "ru",
+            Self::French => "fr",
+            Self::German => "de",
+            Self::Spanish => "es",
+            Self::Italian => "it",
+        }
+    }
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|language| language.code() == code)
+    }
     pub fn text(self, english: &str) -> &str {
         if self == Self::English {
             return english;
@@ -90,6 +105,34 @@ pub fn message(template: &str, values: &[(&str, String)]) -> String {
     result
 }
 
+/// Translate a known product error prefix while retaining Windows codes, sources and paths.
+/// Only operation diagnostics call this function; it is never applied to user data fields.
+pub fn diagnostic(english: &str) -> String {
+    let language = Language::ALL[LANGUAGE.load(Ordering::Relaxed) as usize];
+    diagnostic_in(language, english)
+}
+fn diagnostic_in(language: Language, english: &str) -> String {
+    if let Some(row) = catalog()
+        .iter()
+        .filter(|row| english.starts_with(&row[0]))
+        .filter(|row| {
+            let suffix = &english[row[0].len()..];
+            suffix.is_empty() || suffix.starts_with(": ") || suffix.starts_with(" (")
+        })
+        .max_by_key(|row| row[0].len())
+    {
+        if let Some(detail) = english[row[0].len()..].strip_prefix(": ") {
+            return format!(
+                "{}: {}",
+                language.text(&row[0]),
+                diagnostic_in(language, detail)
+            );
+        }
+        return format!("{}{}", language.text(&row[0]), &english[row[0].len()..]);
+    }
+    english.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +175,40 @@ mod tests {
                 "USBSTOR\\Unknown-serial"
             );
             assert!(!language.text("Safely eject").is_empty());
+        }
+    }
+    #[test]
+    fn veto_reason_is_translated_without_rewriting_windows_source_or_code() {
+        let source = "A Windows application refused removal: D:\\Data\\Editor.exe (Configuration Manager 0x00000017, veto 3)";
+        let translated = diagnostic_in(Language::Russian, source);
+        assert!(translated.starts_with("Приложение Windows запретило извлечение: "));
+        assert!(
+            translated.ends_with("D:\\Data\\Editor.exe (Configuration Manager 0x00000017, veto 3)")
+        );
+    }
+    #[test]
+    fn literal_interface_messages_are_present_in_the_catalog() {
+        let source = include_str!("ui.rs");
+        for marker in ["tr(\"", "message(\""] {
+            for rest in source.split(marker).skip(1) {
+                let mut escaped = false;
+                let end = rest
+                    .char_indices()
+                    .find_map(|(index, character)| {
+                        if character == '"' && !escaped {
+                            return Some(index);
+                        }
+                        escaped = character == '\\' && !escaped;
+                        None
+                    })
+                    .unwrap();
+                let literal = format!("\"{}\"", &rest[..end]);
+                let english: String = serde_json::from_str(&literal).unwrap();
+                assert!(
+                    catalog().iter().any(|row| row[0] == english),
+                    "missing UI message: {english}"
+                );
+            }
         }
     }
 }

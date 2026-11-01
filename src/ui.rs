@@ -230,9 +230,17 @@ impl App {
     fn apply_appearance(&mut self) {
         i18n::set_language(self.settings.language);
         style::set_dark(self.settings.theme == ColorTheme::Dark);
-        for theme in &mut self.themes {
-            *theme = Theme::new(theme.dpi);
+        let replacements = self.themes.each_ref().map(|theme| Theme::new(theme.dpi));
+        let previous = std::mem::replace(&mut self.themes, replacements);
+        // Update hidden native controls too, before releasing the old font handles.
+        // This changes retained resources without laying out or painting hidden windows.
+        for (id, control) in &self.controls {
+            let theme = &self.themes[self.theme_index(unsafe { GetParent(*control) })];
+            unsafe {
+                SendMessageW(*control, WM_SETFONT, control_font(theme, *id) as usize, 0);
+            }
         }
+        drop(previous);
         for (id, english) in [
             (200, "External drives"),
             (HIDE, "Hide to tray"),
@@ -799,7 +807,7 @@ impl App {
                             }
                             Err(error) => {
                                 self.populate(vec![]);
-                                self.status(tr(&error));
+                                self.status(&i18n::diagnostic(&error));
                             }
                         }
                     } else {
@@ -813,8 +821,8 @@ impl App {
                         Ok(EjectResult::Removed) => { self.status(tr("Windows accepted safe removal. You can unplug this device. The list will refresh.")); self.balloon(tr("Safe removal accepted"), tr("Windows accepted removal of the selected device.")); }
                         Ok(EjectResult::Cancelled) => self.status(tr("Ejection cancelled before the Windows request.")),
                         Ok(EjectResult::Stale) => self.status(tr("The device changed or was disconnected. No ejection was requested. Select it again after refresh.")),
-                        Ok(EjectResult::Refused { reason, applications, diagnostics }) => self.status(&format!("{}: {}\r\n{}\r\n{}", tr("Removal refused"), tr(&reason), if applications.is_empty() { tr("No candidate applications discovered. This does not prove the drive is unused.").into() } else { applications.join("; ") }, tr(&diagnostics))),
-                        Err(error) => self.status(&format!("{}: {error}", tr("Ejection failed"))),
+                        Ok(EjectResult::Refused { reason, applications, diagnostics }) => self.status(&format!("{}: {}\r\n{}\r\n{}", tr("Removal refused"), i18n::diagnostic(&reason), if applications.is_empty() { tr("No candidate applications discovered. This does not prove the drive is unused.").into() } else { applications.join("; ") }, i18n::diagnostic(&diagnostics))),
+                        Err(error) => self.status(&format!("{}: {}", tr("Ejection failed"), i18n::diagnostic(&error))),
                     }
                     self.refresh_pending = true;
                 }
@@ -823,7 +831,7 @@ impl App {
                     match result {
                         Ok(apps) if apps.is_empty() => self.status(tr("Restart Manager reported no applications for this file. Other files, Explorer, drivers or protected processes may still block ejection.")),
                         Ok(apps) => self.status(&format!("{}:\r\n{}\r\n{}", tr("Applications using the selected file"), apps.join("\r\n"), tr("Save your work and close these applications yourself, then retry ejection."))),
-                        Err(error) => self.status(tr(&error)),
+                        Err(error) => self.status(&i18n::diagnostic(&error)),
                     }
                 }
                 Event::Saved(value, result) => {
@@ -854,7 +862,10 @@ impl App {
                                 self.status(tr("Startup update checks disabled. Manual checking remains available."));
                             }
                         }
-                        Err(error) => self.status(tr(&error)),
+                        Err(error) => {
+                            self.apply_appearance();
+                            self.status(&i18n::diagnostic(&error));
+                        },
                     }
                     unsafe {
                         SendMessageW(
@@ -885,7 +896,7 @@ impl App {
                             204,
                             tr("This installation is up to date on the stable release channel."),
                         ),
-                        Err(error) => self.text(204, tr(&error)),
+                        Err(error) => self.text(204, &format!("{}: {}", tr("Update check failed"), i18n::diagnostic(&error))),
                     }
                 }
                 Event::Progress(done, total) => self.text(
@@ -907,7 +918,7 @@ impl App {
                             }
                             return;
                         }
-                        Err(error) => self.text(204, &format!("{}: {error}", tr("Update was not installed"))),
+                        Err(error) => self.text(204, &format!("{}: {}", tr("Update was not installed"), i18n::diagnostic(&error))),
                     }
                 }
             }
@@ -921,6 +932,10 @@ impl App {
     fn prepare_diagnostic(&mut self) {
         let options = self.diagnostic.as_ref().unwrap();
         let screen = options.screen.clone();
+        let measure = options.measure;
+        self.settings.language = options.language;
+        self.settings.theme = options.theme;
+        self.apply_appearance();
         self.settings_ready = true;
         self.snapshot_generation = self.generation.load(Ordering::Acquire);
         self.settings.check_updates_on_startup = screen != "settings";
@@ -936,7 +951,7 @@ impl App {
                 0,
             );
         }
-        if matches!(screen.as_str(), "sample" | "error" | "details") || options.measure {
+        if matches!(screen.as_str(), "sample" | "error" | "details") || measure {
             self.populate(capture::sample_devices());
             unsafe {
                 SendMessageW(self.control(LIST), LB_SETCURSEL, 0, 0);
@@ -1330,13 +1345,7 @@ impl App {
             if unsafe { GetParent(*control) } != hwnd {
                 continue;
             }
-            let font = match *id {
-                218 | 221 => theme.title,
-                200 => theme.heading,
-                213 => theme.heading,
-                209 | 210 | 207 | 220 => theme.small,
-                _ => theme.normal,
-            };
+            let font = control_font(theme, *id);
             unsafe {
                 SendMessageW(*control, WM_SETFONT, font as usize, 0);
             }
@@ -1582,6 +1591,15 @@ impl Drop for App {
         }
     }
 }
+fn control_font(theme: &Theme, id: u16) -> HFONT {
+    match id {
+        218 | 221 => theme.title,
+        200 | 213 => theme.heading,
+        209 | 210 | 207 | 220 => theme.small,
+        _ => theme.normal,
+    }
+}
+
 fn capacity(bytes: Option<u64>) -> String {
     if bytes.is_none() {
         tr("Unknown").to_owned()
@@ -2471,7 +2489,7 @@ pub fn run() {
                 let result = capture::save_client(
                     target,
                     &options.output,
-                    serde_json::json!({"under_state_borrow":under_borrow,"outside_state_borrow":outside_borrow}),
+                    serde_json::json!({"under_state_borrow":under_borrow,"outside_state_borrow":outside_borrow,"language":options.language.code(),"theme":options.theme}),
                     menu_dispatch_probe(target),
                 );
                 DestroyWindow(hwnd);

@@ -1,6 +1,6 @@
 # Release preparation
 
-No repository, tag or release is published by the current task. The planned canonical repository is `siarheisinelnikau/usb-eject`. Do not present it as available until it exists.
+The canonical repository is `siarheisinelnikau/usb-eject`. Publish only after source verification and an explicit release instruction. The current localization release is **0.2.0**, with asset `UsbEject-v0.2.0.exe`.
 
 1. Complete and record the applicable [manual checks](MANUAL_TESTS.md). Refresh README's real application-generated panel and settings screenshots when the UI changes; keep fixture captions accurate. Confirm supported Windows versions and device cases from results. Static client screenshots do not prove physical tray behavior or hardware ejection.
 2. Update `Cargo.toml`, regenerate `Cargo.lock` if needed and write readable English release notes from verified changes since the preceding relevant release. For the first release, describe initial capabilities and their actual validation limits.
@@ -10,4 +10,4 @@ No repository, tag or release is published by the current task. The planned cano
 6. Publish a non-draft, non-prerelease tag such as `v0.1.0`, with human-readable notes and the exact executable/checksum assets. The updater checks the canonical repository, semantic versions, channel, asset URL/name and size. A link-only release cannot satisfy in-app installation.
 7. Validate the public update protocol on a disposable writable installation before promising automatic installation. Future releases must retain compatibility with `--apply-update PARENT_PID DESTINATION SHA256`, the ready-file handshake and settings schema 1, or provide a migration path.
 
-The CI configuration builds and stores review artifacts. It has read-only repository permission and no release-publishing step. CI has been prepared locally but has not run on GitHub in this task.
+The verification job must pass before a release is published. Its packaged executable, checksum manifest and notices are the release inputs. A successful build does not establish device safety or interactive rendering performance.
