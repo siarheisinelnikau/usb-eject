@@ -1,6 +1,6 @@
 //! Event-driven Win32 UI. All storage, settings and network I/O runs on bounded workers.
 use crate::ui_capture as capture;
-use crate::ui_style::{self as style, ACCENT, INK, LINE, MUTED, SURFACE, TINT, Theme, WHITE};
+use crate::ui_style::{self as style, Theme, accent, background, ink, line, muted, surface, tint};
 use std::{
     cell::{Cell, RefCell},
     mem::{size_of, zeroed},
@@ -12,8 +12,9 @@ use std::{
     },
 };
 use usb_eject::{
+    i18n::{self, Language, message, tr},
     model::{self, Device, EjectResult, Identity, Storage},
-    settings::{self, Settings},
+    settings::{self, ColorTheme, Settings},
     update::{self, Available},
     windows::{
         from_wide, installer,
@@ -58,6 +59,8 @@ const HIDE: u16 = 117;
 const CLOSE_SETTINGS: u16 = 118;
 const CLOSE_DETAILS: u16 = 119;
 const CANCEL_MAIN: u16 = 120;
+const LANGUAGE: u16 = 121;
+const COLOR_THEME: u16 = 122;
 
 enum DiskCommand {
     Initialize,
@@ -224,6 +227,110 @@ thread_local! {
 }
 
 impl App {
+    fn apply_appearance(&mut self) {
+        i18n::set_language(self.settings.language);
+        style::set_dark(self.settings.theme == ColorTheme::Dark);
+        for theme in &mut self.themes {
+            *theme = Theme::new(theme.dpi);
+        }
+        for (id, english) in [
+            (200, "External drives"),
+            (HIDE, "Hide to tray"),
+            (
+                213,
+                if self.disk_busy {
+                    "Looking for drives…"
+                } else {
+                    "No external drives"
+                },
+            ),
+            (
+                214,
+                if self.disk_busy {
+                    "Windows is checking connected storage."
+                } else {
+                    "Connect a USB drive to see it here."
+                },
+            ),
+            (DETAILS, "Details"),
+            (CANCEL_MAIN, "Cancel"),
+            (EJECT, "Safely eject"),
+            (218, "Settings"),
+            (STARTUP, "Check for updates on startup"),
+            (
+                220,
+                "Checks quietly in the background. Downloads and installation always need your action.",
+            ),
+            (CHECK, "Check for updates"),
+            (INSTALL, "Download and install"),
+            (CANCEL, "Cancel"),
+            (CLOSE_SETTINGS, "Close"),
+            (221, "Drive details"),
+            (209, "VOLUMES AND DEVICE"),
+            (205, "Display &label"),
+            (SAVE_ALIAS, "Save label"),
+            (206, "Inspect a busy file (full &path)"),
+            (INSPECT, "Inspect file"),
+            (210, "OPERATION STATUS"),
+            (CLOSE_DETAILS, "Close"),
+            (223, "Language"),
+            (224, "Theme"),
+        ] {
+            self.text(id, tr(english));
+        }
+        self.text(
+            207,
+            &format!(
+                "UsbEject  ·  {} {}  ·  Windows x64",
+                tr("Version"),
+                update::VERSION
+            ),
+        );
+        unsafe {
+            SetWindowTextW(self.settings_hwnd, wide(tr("UsbEject · Settings")).as_ptr());
+            SetWindowTextW(
+                self.details_hwnd,
+                wide(tr("UsbEject · Drive details")).as_ptr(),
+            );
+            SendMessageW(
+                self.control(LANGUAGE),
+                CB_SETCURSEL,
+                self.settings.language.index(),
+                0,
+            );
+            SendMessageW(self.control(COLOR_THEME), CB_RESETCONTENT, 0, 0);
+            for name in ["Light", "Dark"] {
+                SendMessageW(
+                    self.control(COLOR_THEME),
+                    CB_ADDSTRING,
+                    0,
+                    wide(tr(name)).as_ptr() as isize,
+                );
+            }
+            SendMessageW(
+                self.control(COLOR_THEME),
+                CB_SETCURSEL,
+                usize::from(self.settings.theme == ColorTheme::Dark),
+                0,
+            );
+            // Classic native controls use our WM_CTLCOLOR palette in both themes.
+            for id in [STARTUP, LANGUAGE, COLOR_THEME] {
+                SetWindowTheme(self.control(id), wide("").as_ptr(), wide("").as_ptr());
+            }
+            if self.tray_ok {
+                Shell_NotifyIconW(NIM_MODIFY, &self.tray_data());
+            }
+        }
+        let alias_draft = self.input(ALIAS);
+        let path_draft = self.input(FILE_PATH);
+        self.populate(self.devices.clone());
+        self.text(ALIAS, &alias_draft);
+        self.text(FILE_PATH, &path_draft);
+        for hwnd in [self.hwnd, self.settings_hwnd, self.details_hwnd] {
+            Theme::caption(hwnd);
+            self.layout(hwnd);
+        }
+    }
     fn control(&self, id: u16) -> HWND {
         self.controls
             .iter()
@@ -282,14 +389,14 @@ impl App {
                 .unwrap_or(text)
                 .trim_end_matches('.');
             let target = if self.selected().is_some() {
-                "Open Details for the full result."
+                tr("Open Details for the full result.")
             } else {
-                "Open Settings for details."
+                tr("Open Settings for details.")
             };
             if first.chars().count() <= 110 {
                 format!("{first}. {target}")
             } else {
-                format!("This operation needs attention. {target}")
+                format!("{} {target}", tr("This operation needs attention."))
             }
         };
         self.text(202, &summary);
@@ -339,6 +446,9 @@ impl App {
             self.settings_ready && !self.saving && !self.installing,
         );
         self.enabled(CHECK, !self.net_busy);
+        for id in [LANGUAGE, COLOR_THEME] {
+            self.enabled(id, self.settings_ready && !self.saving && !self.installing);
+        }
         self.enabled(DETAILS, self.selected().is_some());
         self.enabled(
             INSTALL,
@@ -383,49 +493,58 @@ impl App {
                     .unwrap_or(""),
             );
             let mut text = format!(
-                "{}\r\n{} · physical disk {}\r\nPhysical capacity: {}\r\nSerial: {}\r\n\r\n",
+                "{}\r\n{} · {} {}\r\n{}: {}\r\n{}: {}\r\n\r\n",
                 device.name,
                 device.bus,
+                tr("physical disk"),
                 device.identity.disk_number,
-                model::capacity_text(device.capacity),
+                tr("Physical capacity"),
+                capacity(device.capacity),
+                tr("Serial"),
                 if device.identity.serial.is_empty() {
-                    "Not provided"
+                    tr("Not provided")
                 } else {
                     &device.identity.serial
                 }
             );
             for volume in &device.volumes {
                 text.push_str(&format!(
-                    "{}  {}\r\nCapacity: {} · Free: {}\r\n{}\r\n\r\n",
+                    "{}  {}\r\n{}: {} · {}: {}\r\n{}\r\n\r\n",
                     if volume.mounts.is_empty() {
-                        "No mount point".into()
+                        tr("No mount point").into()
                     } else {
                         volume.mounts.join(", ")
                     },
                     if volume.label.is_empty() {
-                        "Unlabeled volume"
+                        tr("Unlabeled volume")
                     } else {
                         &volume.label
                     },
-                    model::capacity_text(volume.capacity),
-                    model::capacity_text(volume.free),
+                    tr("Capacity"),
+                    capacity(volume.capacity),
+                    tr("Free"),
+                    capacity(volume.free),
                     volume.id
                 ));
             }
             if device.volumes.is_empty() {
-                text.push_str("No mapped volumes (media may be absent or locked).\r\n\r\n");
+                text.push_str(&format!(
+                    "{}\r\n\r\n",
+                    tr("No mapped volumes (media may be absent or locked).")
+                ));
             }
             text.push_str(&format!(
-                "Device ID: {}\r\n\r\n{}",
+                "{}: {}\r\n\r\n{}",
+                tr("Device ID"),
                 device.identity.instance_id,
-                device.blocked.as_deref().unwrap_or(
+                device.blocked.as_deref().map(tr).unwrap_or(tr(
                     "Ejection affects this physical disk and all its volumes. Save your work first."
-                )
+                ))
             ));
             self.text(201, &text);
         } else {
             self.text(ALIAS, "");
-            self.text(201, "Select an external device to inspect its volumes.\r\n\r\nInternal storage and the Windows system disk are excluded.\r\n\r\nNo external devices found? Connect a USB drive and choose Refresh. Unknown and unsupported bus types are omitted.");
+            self.text(201, tr("Select an external device to inspect its volumes.\r\n\r\nInternal storage and the Windows system disk are excluded.\r\n\r\nNo external devices found? Connect a USB drive and choose Refresh. Unknown and unsupported bus types are omitted."));
         }
         self.update_buttons();
     }
@@ -450,7 +569,7 @@ impl App {
                     format!("  [{}]", mounts.join(", "))
                 },
                 if device.blocked.is_some() {
-                    "  (protected)"
+                    tr("  (protected)")
                 } else {
                     ""
                 }
@@ -480,17 +599,17 @@ impl App {
             self.disk_busy = true;
             self.refresh_pending = false;
             self.disk_cancel.store(false, Ordering::Release);
-            self.text(213, "Looking for drives…");
-            self.text(214, "Windows is checking connected storage.");
+            self.text(213, tr("Looking for drives…"));
+            self.text(214, tr("Windows is checking connected storage."));
             self.update_buttons();
         } else {
-            self.status("Storage worker is unavailable. Restart UsbEject.");
+            self.status(tr("Storage worker is unavailable. Restart UsbEject."));
         }
     }
     fn check_updates(&mut self) {
         if !self.net_busy && self.net.try_send(NetCommand::Check).is_ok() {
             self.net_busy = true;
-            self.text(204, "Checking the canonical GitHub repository…");
+            self.text(204, tr("Checking the canonical GitHub repository…"));
             self.update_buttons();
         }
     }
@@ -522,7 +641,9 @@ impl App {
                 };
                 let epoch = self.generation.load(Ordering::Acquire);
                 if device.blocked.is_some() || epoch != self.snapshot_generation {
-                    self.status("The device list changed. Refresh and select the device again.");
+                    self.status(tr(
+                        "The device list changed. Refresh and select the device again.",
+                    ));
                     return;
                 }
                 if self
@@ -533,20 +654,20 @@ impl App {
                     self.disk_cancel.store(false, Ordering::Release);
                     self.disk_busy = true;
                     self.ejecting = true;
-                    self.status("Validating device identity and requesting safe removal… Cancel can stop preparation; an active Windows PnP request cannot be undone.");
+                    self.status(tr("Validating device identity and requesting safe removal… Cancel can stop preparation; an active Windows PnP request cannot be undone."));
                 }
             }
             CANCEL | CANCEL_MAIN if !self.handoff => {
                 self.disk_cancel.store(true, Ordering::Release);
                 self.net_cancel.store(true, Ordering::Release);
-                self.status("Cancellation requested. An active Windows ejection call cannot be interrupted; wait for its result. Downloads stop at the next read boundary.");
+                self.status(tr("Cancellation requested. An active Windows ejection call cannot be interrupted; wait for its result. Downloads stop at the next read boundary."));
             }
             SAVE_ALIAS => {
                 if let Some(device) = self.selected() {
                     let mut value = self.settings.clone();
                     let label = self.input(ALIAS).trim().to_owned();
                     if label.chars().count() > 80 || label.chars().any(char::is_control) {
-                        self.status("Use a display label of at most 80 characters without control characters.");
+                        self.status(tr("Use a display label of at most 80 characters without control characters."));
                         return;
                     }
                     if label.is_empty() {
@@ -568,9 +689,9 @@ impl App {
                         .is_ok()
                     {
                         self.disk_busy = true;
-                        self.status(
+                        self.status(tr(
                             "Asking Restart Manager which applications use this exact file…",
-                        );
+                        ));
                     }
                 }
             }
@@ -579,6 +700,23 @@ impl App {
                     == BST_CHECKED as isize;
                 let mut value = self.settings.clone();
                 value.check_updates_on_startup = checked;
+                self.save(value);
+            }
+            LANGUAGE | COLOR_THEME if notification == CBN_SELCHANGE as u16 => {
+                let selected = unsafe { SendMessageW(self.control(id), CB_GETCURSEL, 0, 0) };
+                let mut value = self.settings.clone();
+                if id == LANGUAGE {
+                    let Some(language) = Language::ALL.get(selected as usize) else {
+                        return;
+                    };
+                    value.language = *language;
+                } else {
+                    value.theme = if selected == 1 {
+                        ColorTheme::Dark
+                    } else {
+                        ColorTheme::Light
+                    };
+                }
                 self.save(value);
             }
             CHECK => self.check_updates(),
@@ -592,7 +730,7 @@ impl App {
                     {
                         self.net_busy = true;
                         self.installing = true;
-                        self.text(204, "Downloading verified update. UsbEject will close and restart after installation. Settings and display labels are preserved.");
+                        self.text(204, tr("Downloading verified update. UsbEject will close and restart after installation. Settings and display labels are preserved."));
                     }
                 }
             }
@@ -618,17 +756,18 @@ impl App {
                     match result {
                         Ok(settings) => {
                             self.settings = settings;
+                            self.apply_appearance();
                             self.settings_ready = true;
                             if self.settings.check_updates_on_startup {
                                 self.check_updates();
                             } else {
-                                self.text(204, "Automatic startup checks are disabled. Manual checking remains available.");
+                                self.text(204, tr("Automatic startup checks are disabled. Manual checking remains available."));
                             }
                         }
                         Err(error) => {
                             self.settings.check_updates_on_startup = false;
-                            self.status(&format!("{error}. Settings editing and startup update checks are disabled for this session."));
-                            self.text(204, "Startup checks are disabled because settings could not be loaded. Manual checking remains available.");
+                            self.status(&format!("{error}. {}", tr("Settings editing and startup update checks are disabled for this session.")));
+                            self.text(204, tr("Startup checks are disabled because settings could not be loaded. Manual checking remains available."));
                         }
                     }
                     unsafe {
@@ -650,8 +789,8 @@ impl App {
                 }
                 Event::Scanned(epoch, result) => {
                     self.disk_busy = false;
-                    self.text(213, "No external drives");
-                    self.text(214, "Connect a USB drive to see it here.");
+                    self.text(213, tr("No external drives"));
+                    self.text(214, tr("Connect a USB drive to see it here."));
                     if epoch == self.generation.load(Ordering::Acquire) {
                         self.snapshot_generation = epoch;
                         match result {
@@ -660,7 +799,7 @@ impl App {
                             }
                             Err(error) => {
                                 self.populate(vec![]);
-                                self.status(&error);
+                                self.status(tr(&error));
                             }
                         }
                     } else {
@@ -671,20 +810,20 @@ impl App {
                     self.disk_busy = false;
                     self.ejecting = false;
                     match result {
-                        Ok(EjectResult::Removed) => { self.status("Windows accepted safe removal. You can unplug this device. The list will refresh."); self.balloon("Safe removal accepted", "Windows accepted removal of the selected device."); }
-                        Ok(EjectResult::Cancelled) => self.status("Ejection cancelled before the Windows request."),
-                        Ok(EjectResult::Stale) => self.status("The device changed or was disconnected. No ejection was requested. Select it again after refresh."),
-                        Ok(EjectResult::Refused { reason, applications, diagnostics }) => self.status(&format!("Removal refused: {reason}\r\n{}\r\n{diagnostics}", if applications.is_empty() { "No candidate applications discovered. This does not prove the drive is unused.".into() } else { applications.join("; ") })),
-                        Err(error) => self.status(&format!("Ejection failed: {error}")),
+                        Ok(EjectResult::Removed) => { self.status(tr("Windows accepted safe removal. You can unplug this device. The list will refresh.")); self.balloon(tr("Safe removal accepted"), tr("Windows accepted removal of the selected device.")); }
+                        Ok(EjectResult::Cancelled) => self.status(tr("Ejection cancelled before the Windows request.")),
+                        Ok(EjectResult::Stale) => self.status(tr("The device changed or was disconnected. No ejection was requested. Select it again after refresh.")),
+                        Ok(EjectResult::Refused { reason, applications, diagnostics }) => self.status(&format!("{}: {}\r\n{}\r\n{}", tr("Removal refused"), tr(&reason), if applications.is_empty() { tr("No candidate applications discovered. This does not prove the drive is unused.").into() } else { applications.join("; ") }, tr(&diagnostics))),
+                        Err(error) => self.status(&format!("{}: {error}", tr("Ejection failed"))),
                     }
                     self.refresh_pending = true;
                 }
                 Event::Inspected(result) => {
                     self.disk_busy = false;
                     match result {
-                        Ok(apps) if apps.is_empty() => self.status("Restart Manager reported no applications for this file. Other files, Explorer, drivers or protected processes may still block ejection."),
-                        Ok(apps) => self.status(&format!("Applications using the selected file:\r\n{}\r\nSave your work and close these applications yourself, then retry ejection.", apps.join("\r\n"))),
-                        Err(error) => self.status(&error),
+                        Ok(apps) if apps.is_empty() => self.status(tr("Restart Manager reported no applications for this file. Other files, Explorer, drivers or protected processes may still block ejection.")),
+                        Ok(apps) => self.status(&format!("{}:\r\n{}\r\n{}", tr("Applications using the selected file"), apps.join("\r\n"), tr("Save your work and close these applications yourself, then retry ejection."))),
+                        Err(error) => self.status(tr(&error)),
                     }
                 }
                 Event::Saved(value, result) => {
@@ -692,19 +831,30 @@ impl App {
                     match result {
                         Ok(()) => {
                             let aliases_changed = self.settings.aliases != value.aliases;
+                            let appearance_changed = self.settings.language != value.language || self.settings.theme != value.theme;
                             self.settings = value;
-                            if aliases_changed {
+                            if appearance_changed {
+                                self.apply_appearance();
+                                self.status(tr("Appearance saved."));
+                                if !self.net_busy {
+                                    if let Some(available) = &self.available {
+                                        self.text(204, &message("Version {version} is available. Download and install closes and restarts the application.", &[("version", available.version.to_string())]));
+                                    } else {
+                                        self.text(204, tr("Check for updates"));
+                                    }
+                                }
+                            } else if aliases_changed {
                                 self.populate(self.devices.clone());
                                 self.status(
-                                    "Display label saved. Filesystem volume labels are unchanged.",
+                                    tr("Display label saved. Filesystem volume labels are unchanged."),
                                 );
                             } else if self.settings.check_updates_on_startup {
-                                self.status("Startup update checks enabled. The setting applies at the next launch.");
+                                self.status(tr("Startup update checks enabled. The setting applies at the next launch."));
                             } else {
-                                self.status("Startup update checks disabled. Manual checking remains available.");
+                                self.status(tr("Startup update checks disabled. Manual checking remains available."));
                             }
                         }
-                        Err(error) => self.status(&error),
+                        Err(error) => self.status(tr(&error)),
                     }
                     unsafe {
                         SendMessageW(
@@ -724,35 +874,27 @@ impl App {
                     self.available = None;
                     match result {
                         Ok(Some(available)) => {
-                            self.text(204, &format!("Version {} is available. Download and install closes and restarts the application.", available.version));
+                            self.text(204, &message("Version {version} is available. Download and install closes and restarts the application.", &[("version", available.version.to_string())]));
                             self.balloon(
-                                "UsbEject update available",
-                                &format!(
-                                    "Version {} is available in Settings / Updates.",
-                                    available.version
-                                ),
+                                tr("UsbEject update available"),
+                                &message("Version {version} is available in Settings / Updates.", &[("version", available.version.to_string())]),
                             );
                             self.available = Some(available);
                         }
                         Ok(None) => self.text(
                             204,
-                            "This installation is up to date on the stable release channel.",
+                            tr("This installation is up to date on the stable release channel."),
                         ),
-                        Err(error) => self.text(204, &error),
+                        Err(error) => self.text(204, tr(&error)),
                     }
                 }
                 Event::Progress(done, total) => self.text(
                     204,
-                    &format!(
-                        "Downloading update: {}% ({} / {} KiB). Verifying before installation…",
-                        done * 100 / total,
-                        done / 1024,
-                        total / 1024
-                    ),
+                    &message("Downloading update: {percent}% ({done} / {total} KiB). Verifying before installation…", &[("percent", (done * 100 / total.max(1)).to_string()), ("done", (done / 1024).to_string()), ("total", (total / 1024).to_string())]),
                 ),
                 Event::Handoff => {
                     self.handoff = true;
-                    self.text(204, "Verification complete. Preparing executable replacement and restart; cancellation is no longer available.");
+                    self.text(204, tr("Verification complete. Preparing executable replacement and restart; cancellation is no longer available."));
                 }
                 Event::Installed(result) => {
                     self.net_busy = false;
@@ -765,7 +907,7 @@ impl App {
                             }
                             return;
                         }
-                        Err(error) => self.text(204, &format!("Update was not installed: {error}")),
+                        Err(error) => self.text(204, &format!("{}: {error}", tr("Update was not installed"))),
                     }
                 }
             }
@@ -803,13 +945,15 @@ impl App {
         } else {
             self.populate(vec![]);
         }
-        self.text(204,"Automatic startup checks are disabled. You can check for updates manually at any time.");
+        self.text(204,tr("Automatic startup checks are disabled. You can check for updates manually at any time."));
         if screen == "error" {
-            self.status("Windows could not remove this drive. Close files and apps using it, then try again. Open Details to inspect a busy file.");
+            self.status(tr("Windows could not remove this drive. Close files and apps using it, then try again. Open Details to inspect a busy file."));
         } else if self.devices.is_empty() {
             self.status("");
         } else {
-            self.status("Save open files before ejecting this drive and all its volumes.");
+            self.status(tr(
+                "Save open files before ejecting this drive and all its volumes.",
+            ));
         }
         self.update_buttons();
     }
@@ -930,9 +1074,9 @@ impl App {
     }
     fn quit(&mut self) {
         if self.ejecting || self.installing || self.saving {
-            self.status(
+            self.status(tr(
                 "Wait for the active operation to finish, or cancel preparation before quitting.",
-            );
+            ));
             self.restore();
             return;
         }
@@ -950,7 +1094,10 @@ impl App {
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         data.uCallbackMessage = TRAY;
         data.hIcon = self.tray_icon;
-        copy_wide(&mut data.szTip, "UsbEject · click to safely remove a drive");
+        copy_wide(
+            &mut data.szTip,
+            tr("UsbEject · click to safely remove a drive"),
+        );
         data
     }
     fn add_tray(&mut self) {
@@ -1068,7 +1215,7 @@ impl App {
             let (width, height) = if hwnd == self.hwnd {
                 (380, self.panel_client_height())
             } else if hwnd == self.settings_hwnd {
-                (480, 380)
+                (600, 510)
             } else {
                 (620, 640)
             };
@@ -1145,11 +1292,15 @@ impl App {
             vec![
                 (218, 24, 18, width - 48, 34),
                 (207, 24, 58, width - 48, 24),
-                (STARTUP, 24, 108, width - 48, 28),
-                (220, 47, 140, width - 71, 42),
-                (CHECK, 24, 194, 180, 36),
-                (INSTALL, 216, 194, width - 240, 36),
-                (204, 24, 246, width - 48, 64),
+                (223, 24, 102, 116, 24),
+                (LANGUAGE, 152, 96, width - 176, 240),
+                (224, 24, 150, 116, 24),
+                (COLOR_THEME, 152, 144, width - 176, 120),
+                (STARTUP, 24, 200, width - 48, 28),
+                (220, 47, 232, width - 71, 42),
+                (CHECK, 24, 294, 220, 36),
+                (INSTALL, 256, 294, width - 280, 36),
+                (204, 24, 346, width - 48, 96),
                 (CANCEL, 24, height - 50, 110, 34),
                 (CLOSE_SETTINGS, width - 124, height - 50, 100, 34),
             ]
@@ -1158,12 +1309,12 @@ impl App {
                 (221, 24, 18, width - 48, 34),
                 (209, 24, 62, width - 48, 20),
                 (201, 24, 88, width - 48, height - 385),
-                (205, 24, height - 278, 120, 20),
-                (ALIAS, 24, height - 252, width - 168, 32),
-                (SAVE_ALIAS, width - 132, height - 252, 108, 32),
+                (205, 24, height - 278, width - 48, 20),
+                (ALIAS, 24, height - 252, width - 224, 32),
+                (SAVE_ALIAS, width - 188, height - 252, 164, 32),
                 (206, 24, height - 207, width - 48, 20),
-                (FILE_PATH, 24, height - 182, width - 168, 32),
-                (INSPECT, width - 132, height - 182, 108, 32),
+                (FILE_PATH, 24, height - 182, width - 224, 32),
+                (INSPECT, width - 188, height - 182, 164, 32),
                 (210, 24, height - 139, width - 48, 20),
                 (215, 24, height - 115, width - 48, 54),
                 (CLOSE_DETAILS, width - 124, height - 48, 100, 32),
@@ -1339,8 +1490,8 @@ impl App {
             item.hDC,
             card,
             theme.s(12),
-            if selected { TINT } else { SURFACE },
-            if selected { ACCENT } else { LINE },
+            if selected { tint() } else { surface() },
+            if selected { accent() } else { line() },
         );
         unsafe {
             DrawIconEx(
@@ -1366,7 +1517,7 @@ impl App {
             theme.heading,
             device.display_name(&self.settings.aliases),
             textrect,
-            INK,
+            ink(),
             DT_SINGLELINE | DT_END_ELLIPSIS,
         );
         let mounts: Vec<_> = device
@@ -1381,9 +1532,9 @@ impl App {
             } else {
                 mounts.join("  ")
             },
-            model::capacity_text(device.capacity),
+            capacity(device.capacity),
             if device.blocked.is_some() {
-                " · Protected"
+                tr(" · Protected")
             } else {
                 ""
             }
@@ -1398,7 +1549,7 @@ impl App {
             theme.small,
             &summary,
             second,
-            MUTED,
+            muted(),
             DT_SINGLELINE | DT_END_ELLIPSIS,
         );
         if item.itemState & ODS_FOCUS != 0 {
@@ -1431,6 +1582,14 @@ impl Drop for App {
         }
     }
 }
+fn capacity(bytes: Option<u64>) -> String {
+    if bytes.is_none() {
+        tr("Unknown").to_owned()
+    } else {
+        model::capacity_text(bytes)
+    }
+}
+
 fn copy_wide(target: &mut [u16], text: &str) {
     for (slot, code) in target.iter_mut().zip(text.encode_utf16()) {
         *slot = code;
@@ -1504,9 +1663,9 @@ fn show_tray_menu(hwnd: HWND, keyboard: bool) {
             return;
         }
         for (id, label) in [
-            (OPEN, "Open drives"),
-            (SETTINGS, "Settings\tCtrl+,"),
-            (REFRESH, "Refresh drives\tF5"),
+            (OPEN, tr("Open drives")),
+            (SETTINGS, tr("Settings\tCtrl+,")),
+            (REFRESH, tr("Refresh drives\tF5")),
         ] {
             AppendMenuW(menu, MF_STRING, id as usize, wide(label).as_ptr());
         }
@@ -1515,7 +1674,7 @@ fn show_tray_menu(hwnd: HWND, keyboard: bool) {
             menu,
             MF_STRING,
             QUIT as usize,
-            wide("Quit UsbEject\tCtrl+Q").as_ptr(),
+            wide(tr("Quit UsbEject\tCtrl+Q")).as_ptr(),
         );
         let mut point = POINT::default();
         if keyboard {
@@ -1634,14 +1793,14 @@ fn control_colors(dc: HDC, control: HWND) -> LRESULT {
         SetTextColor(
             dc,
             if matches!(id, 207 | 209 | 210 | 214 | 220) {
-                MUTED
+                muted()
             } else {
-                INK
+                ink()
             },
         );
-        SetBkColor(dc, WHITE);
+        SetBkColor(dc, background());
         SetBkMode(dc, OPAQUE as i32);
-        GetStockObject(WHITE_BRUSH) as LRESULT
+        style::background_brush() as LRESULT
     }
 }
 
@@ -1660,7 +1819,7 @@ unsafe extern "system" fn window_proc(
     let role = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
     if matches!(
         message,
-        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX
     ) {
         return control_colors(wparam as HDC, lparam as HWND);
     }
@@ -1668,7 +1827,7 @@ unsafe extern "system" fn window_proc(
         let mut bounds = RECT::default();
         unsafe {
             GetClientRect(hwnd, &mut bounds);
-            FillRect(wparam as HDC, &bounds, GetStockObject(WHITE_BRUSH));
+            FillRect(wparam as HDC, &bounds, style::background_brush());
         }
         return 1;
     }
@@ -1703,7 +1862,7 @@ unsafe extern "system" fn window_proc(
         {
             if unsafe { IsWindowVisible(hwnd) } != 0 {
                 unsafe {
-                    FillRect(wparam as HDC, &clip, GetStockObject(WHITE_BRUSH));
+                    FillRect(wparam as HDC, &clip, style::background_brush());
                 }
                 NATIVE_BACKDROPS.with(|count| count.set(count.get() + 1));
             }
@@ -1974,7 +2133,7 @@ pub fn run() {
             hInstance: instance,
             hIcon: icon,
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-            hbrBackground: GetStockObject(WHITE_BRUSH),
+            hbrBackground: style::background_brush(),
             lpszClassName: name.as_ptr(),
             ..zeroed()
         };
@@ -2008,8 +2167,8 @@ pub fn run() {
             hwnd
         };
         let hwnd = make_window("UsbEject", 1, null_mut(), 380, 320, true);
-        let settings_hwnd = make_window("UsbEject · Settings", 2, hwnd, 480, 420, false);
-        let details_hwnd = make_window("UsbEject · Drive details", 3, hwnd, 620, 680, false);
+        let settings_hwnd = make_window(tr("UsbEject · Settings"), 2, hwnd, 600, 550, false);
+        let details_hwnd = make_window(tr("UsbEject · Drive details"), 3, hwnd, 620, 680, false);
         if hwnd.is_null() || settings_hwnd.is_null() || details_hwnd.is_null() {
             if !hwnd.is_null() {
                 DestroyWindow(hwnd);
@@ -2021,8 +2180,8 @@ pub fn run() {
             return;
         }
         let mut controls = Vec::new();
-        label(hwnd, &mut controls, 200, "External drives");
-        button(hwnd, &mut controls, HIDE, "Hide to tray");
+        label(hwnd, &mut controls, 200, tr("External drives"));
+        button(hwnd, &mut controls, HIDE, tr("Hide to tray"));
         child(
             hwnd,
             &mut controls,
@@ -2041,7 +2200,7 @@ pub fn run() {
             &mut controls,
             213,
             "STATIC",
-            "No external drives",
+            tr("No external drives"),
             WS_GROUP,
         );
         child(
@@ -2049,81 +2208,114 @@ pub fn run() {
             &mut controls,
             214,
             "STATIC",
-            "Connect a USB drive to see it here.",
+            tr("Connect a USB drive to see it here."),
             SS_LEFT,
         );
-        button(hwnd, &mut controls, DETAILS, "Details");
-        button(hwnd, &mut controls, CANCEL_MAIN, "Cancel");
-        button(hwnd, &mut controls, EJECT, "Safely eject");
+        button(hwnd, &mut controls, DETAILS, tr("Details"));
+        button(hwnd, &mut controls, CANCEL_MAIN, tr("Cancel"));
+        button(hwnd, &mut controls, EJECT, tr("Safely eject"));
         label(hwnd, &mut controls, 202, "");
 
-        label(settings_hwnd, &mut controls, 218, "Settings");
+        label(settings_hwnd, &mut controls, 218, tr("Settings"));
+        label(settings_hwnd, &mut controls, 223, tr("Language"));
+        let language_control = child(
+            settings_hwnd,
+            &mut controls,
+            LANGUAGE,
+            "COMBOBOX",
+            "",
+            WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST as u32,
+        );
+        for language in Language::ALL {
+            SendMessageW(
+                language_control,
+                CB_ADDSTRING,
+                0,
+                wide(language.name()).as_ptr() as isize,
+            );
+        }
+        label(settings_hwnd, &mut controls, 224, tr("Theme"));
+        child(
+            settings_hwnd,
+            &mut controls,
+            COLOR_THEME,
+            "COMBOBOX",
+            "",
+            WS_TABSTOP | CBS_DROPDOWNLIST as u32,
+        );
+
         label(
             settings_hwnd,
             &mut controls,
             207,
-            &format!("UsbEject  ·  Version {}  ·  Windows x64", update::VERSION),
+            &format!(
+                "UsbEject  ·  {} {}  ·  Windows x64",
+                tr("Version"),
+                update::VERSION
+            ),
         );
         child(
             settings_hwnd,
             &mut controls,
             STARTUP,
             "BUTTON",
-            "Check for updates on startup",
+            tr("Check for updates on startup"),
             WS_TABSTOP | BS_AUTOCHECKBOX as u32,
         );
         label(
             settings_hwnd,
             &mut controls,
             220,
-            "Checks quietly in the background. Downloads and installation always need your action.",
+            tr(
+                "Checks quietly in the background. Downloads and installation always need your action.",
+            ),
         );
-        button(settings_hwnd, &mut controls, CHECK, "Check for updates");
+        button(settings_hwnd, &mut controls, CHECK, tr("Check for updates"));
         button(
             settings_hwnd,
             &mut controls,
             INSTALL,
-            "Download and install",
+            tr("Download and install"),
         );
         edit(
             settings_hwnd,
             &mut controls,
             204,
-            "Loading update preferences…",
+            tr("Loading update preferences…"),
             true,
         );
-        button(settings_hwnd, &mut controls, CANCEL, "Cancel");
-        button(settings_hwnd, &mut controls, CLOSE_SETTINGS, "Close");
+        button(settings_hwnd, &mut controls, CANCEL, tr("Cancel"));
+        button(settings_hwnd, &mut controls, CLOSE_SETTINGS, tr("Close"));
 
-        label(details_hwnd, &mut controls, 221, "Drive details");
-        label(details_hwnd, &mut controls, 209, "VOLUMES AND DEVICE");
+        label(details_hwnd, &mut controls, 221, tr("Drive details"));
+        label(details_hwnd, &mut controls, 209, tr("VOLUMES AND DEVICE"));
         edit(
             details_hwnd,
             &mut controls,
             201,
-            "Select a drive from the tray panel.",
+            tr("Select a drive from the tray panel."),
             true,
         );
-        label(details_hwnd, &mut controls, 205, "Display &label");
+        label(details_hwnd, &mut controls, 205, tr("Display &label"));
         edit(details_hwnd, &mut controls, ALIAS, "", false);
-        button(details_hwnd, &mut controls, SAVE_ALIAS, "Save label");
+        button(details_hwnd, &mut controls, SAVE_ALIAS, tr("Save label"));
         label(
             details_hwnd,
             &mut controls,
             206,
-            "Inspect a busy file (full &path)",
+            tr("Inspect a busy file (full &path)"),
         );
         edit(details_hwnd, &mut controls, FILE_PATH, "", false);
-        button(details_hwnd, &mut controls, INSPECT, "Inspect file");
-        label(details_hwnd, &mut controls, 210, "OPERATION STATUS");
+        button(details_hwnd, &mut controls, INSPECT, tr("Inspect file"));
+        label(details_hwnd, &mut controls, 210, tr("OPERATION STATUS"));
         edit(
             details_hwnd,
             &mut controls,
             215,
-            "Save your files before ejecting a drive.",
+            tr("Save your files before ejecting a drive."),
             true,
         );
-        button(details_hwnd, &mut controls, CLOSE_DETAILS, "Close");
+        button(details_hwnd, &mut controls, CLOSE_DETAILS, tr("Close"));
         let generation = DEVICE_EPOCH.with(Arc::clone);
         let disk_cancel = Arc::new(AtomicBool::new(false));
         let net_cancel = Arc::new(AtomicBool::new(false));
@@ -2157,12 +2349,12 @@ pub fn run() {
                 left: 0,
                 top: 0,
                 right: if secondary == settings_hwnd {
-                    480 * dpi as i32 / 96
+                    600 * dpi as i32 / 96
                 } else {
                     620 * dpi as i32 / 96
                 },
                 bottom: if secondary == settings_hwnd {
-                    380 * dpi as i32 / 96
+                    510 * dpi as i32 / 96
                 } else {
                     640 * dpi as i32 / 96
                 },
@@ -2222,12 +2414,15 @@ pub fn run() {
             paint_events: vec![],
             draw_events: vec![],
         };
+        app.apply_appearance();
         if app.diagnostic.is_some() {
             app.prepare_diagnostic();
         } else {
             app.add_tray();
             if !app.tray_ok {
-                app.status("The tray icon is unavailable. Closing this panel quits UsbEject.");
+                app.status(tr(
+                    "The tray icon is unavailable. Closing this panel quits UsbEject.",
+                ));
             }
             app.disk.try_send(DiskCommand::Initialize).ok();
         }
