@@ -2,7 +2,7 @@
 
 A small native Windows tray utility for reviewing and safely ejecting an external physical drive and all its volumes. Independent MIT-licensed implementation with original UI and artwork; no affiliation with USB Safely Remove.
 
-**Status: v0.1.3 local preview.** The main interaction is a compact tray panel with separate Settings and Drive details windows. This revision removes duplicated panel controls, fixes the reentrant menu redraw path and places secondary windows near the tray. Native screenshots, callback probes and bounded rendering checks were completed without Computer Use. Physical tray/menu clicks, mixed-monitor interaction, real device ejection and update installation still need manual validation. No repository or release has been published by this development session.
+**Status: v0.2.0 prepared for release.** UsbEject now includes English, Russian, French, German, Spanish and Italian interfaces, with saved language and Light / Dark controls in Settings. Changes apply to the tray panel, Settings and Drive details without restarting. The application keeps its native, event-driven Win32/GDI renderer. This code-only revision does not claim interactive, real-hardware, update-installation or new visual validation.
 
 ## Capabilities
 
@@ -12,6 +12,12 @@ A small native Windows tray utility for reviewing and safely ejecting an externa
 - Explicitly select a drive, then choose **Safely eject**. A scan never automatically selects a new drive. Discovery and identity validation repeat before the supported Windows PnP removal request. Display labels never rename a filesystem volume.
 - Windows veto type, veto source and status code on refusal. Candidates whose executables run from that drive are listed as partial diagnostic information. **Inspect file** uses Restart Manager to discover applications using one chosen file, without shutting them down.
 - Nonblocking startup update checks, a persistent opt-out, manual **Check for updates**, and user-initiated **Download and install** with progress, SHA-256 verification, a staged portable replacement and restart.
+
+## Language and appearance
+
+Right-click the tray icon and choose **Settings** (or press **Ctrl+,** from the panel). The **Language** list uses native names: English, Русский, Français, Deutsch, Español and Italiano. Choose **Light** or **Dark** under **Theme**. Both choices are saved and applied after the background save succeeds, with no restart. If saving fails, the controls return to the saved choice and show the error. The main panel remains focused on drive selection and safe removal.
+
+Language changes cover the panel, device details, operation guidance, tray commands, notifications and update controls. Drive names, custom display labels, file paths, serial numbers, Windows error codes and technical diagnostic payloads remain intact. Windows-owned context-menu chrome follows the Windows menu appearance. Settings from earlier versions retain aliases and the startup-update preference, defaulting to English and Light when the new fields are absent.
 
 ## Build and package
 
@@ -24,14 +30,14 @@ From this repository in PowerShell:
 ./scripts/package.ps1 -Offline
 ```
 
-Keep `rust-auto-updator` beside this repository at `../rust-auto-updator/crates/rust-auto-updator`. It is a local path dependency; standalone CI checkouts must provision the same sibling before verification. This session does not publish the shared source. Omit `-Offline` when dependencies need to be fetched. Both scripts use a repository-local `target` and at most two Cargo jobs. Verification runs formatting, Clippy with warnings denied and fixture tests; it never launches the GUI or ejects devices. Packaging compiles resources and a release binary without starting it.
+Keep `rust-auto-updator` beside this repository at `../rust-auto-updator/crates/rust-auto-updator`. It is a local path dependency; standalone CI checkouts must provision the same sibling before verification. Omit `-Offline` when dependencies need to be fetched. Both scripts use a repository-local `target` and at most two Cargo jobs. Verification runs formatting, Clippy with warnings denied and fixture tests; it never launches the GUI or ejects devices. Packaging compiles resources and a release binary without starting it.
 
 Output in `dist/`:
 
-- `UsbEject-v0.1.3.exe` — the single Windows x64 executable.
+- `UsbEject-v0.2.0.exe` — the single Windows x64 executable.
 - `SHA256SUMS`, `LICENSE`, `THIRD-PARTY-NOTICES.txt`, `build-info.json`, `inspection.json`.
 
-The filename intentionally has no architecture suffix while only one executable architecture is distributed. Keep license notices with redistributed copies. The CI workflow builds review artifacts only; it does not publish GitHub Releases.
+The filename intentionally has no architecture suffix while only one executable architecture is distributed. Keep license notices with redistributed copies. The verification workflow builds the portable executable and license notices before any authorized publication.
 
 ## Everyday use
 
@@ -50,13 +56,13 @@ Settings live in `%LOCALAPPDATA%\UsbEject\settings.json`. They are saved by repl
 
 The separate **Settings** window shows the installed version and startup-check toggle. Disabling the toggle makes no update request at the next startup; manual checking remains available. Startup failures and no-update results stay there. The drive panel stays focused on removal. An available update also produces a quiet tray notification.
 
-The planned canonical source is [siarheisinelnikau/usb-eject](https://github.com/siarheisinelnikau/usb-eject). Until the repository and a compatible release exist, checks report the source as unavailable. A 404, rate limit or network failure is never presented as “up to date.” Stable releases must include `UsbEject-vVERSION.exe` and a `SHA256SUMS` entry for that exact filename. See [release preparation](docs/RELEASING.md).
+The canonical source is [siarheisinelnikau/usb-eject](https://github.com/siarheisinelnikau/usb-eject). If the repository or a compatible release is unavailable, update checks report that failure. A 404, rate limit or network failure is never presented as “up to date.” Stable releases must include `UsbEject-vVERSION.exe` and a `SHA256SUMS` entry for that exact filename. See [release preparation](docs/RELEASING.md).
 
 **Download and install** is explicit consent to download, verify, close UsbEject, replace its EXE and restart it. Startup checks never download or install. The shared `rust-auto-updator` core owns HTTPS, release selection, size/SHA-256/PE validation, progress, cancellation, replacement and rollback. The product adapter preserves `UsbEject-vVERSION.exe`, the existing `SHA256SUMS` manifest and saved startup preference. Cancellation ends after verified handoff begins.
 
 A unique `.usb-eject-update-*` staging folder is reserved beside the portable EXE; the folder must be writable and no elevation is requested. The helper verifies the old process/installed hash, waits for exit, retains a backup during replacement, and restarts. A failed launch restores and attempts to restart the old executable. Successful host startup acknowledges installation and cleans the validated staging files. Settings remain in their own data directory. A small adapter also recognizes the old `--apply-update PID DESTINATION SHA256` invocation, validates its historical app-owned staging root/name, and delegates installation to the shared core, preserving updates initiated by pre-extraction releases. Legacy staging files are retained for manual cleanup.
 
-Checksums establish integrity against the canonical HTTPS release; releases are not code-signed yet. Full network/install/restart, tray interaction and visible/hidden runtime performance remain unverified in the current code-only pass. The native packaged icons can be checked without starting the app using `scripts/inspect-icons.ps1 -ExecutablePath dist/UsbEject-v0.1.3.exe -ResourceId 1`; this saves a resource proof, not an OS tray screenshot.
+Checksums establish integrity against the canonical HTTPS release; releases are not code-signed yet. Full network/install/restart, tray interaction and visible/hidden runtime performance remain unverified in the current code-only pass. The native packaged icons can be checked without starting the app using `scripts/inspect-icons.ps1 -ExecutablePath dist/UsbEject-v0.2.0.exe -ResourceId 1`; this saves a resource proof, not an OS tray screenshot.
 
 ## Limits and verification
 
@@ -68,6 +74,8 @@ Checksums establish integrity against the canonical HTTPS release; releases are 
 - A release build and passing unit tests do not establish safe behavior on real hardware or the quality of the rendered interface. See [validation record](docs/VALIDATION.md), [architecture](docs/ARCHITECTURE.md) and [manual checks](docs/MANUAL_TESTS.md).
 
 ## Screenshots
+
+**Historical screenshots:** these real client captures were produced with v0.1.3 before the new Language / Theme controls. Updated v0.2.0 panel and Settings screenshots in both themes remain pending because the current code-only instructions prohibit launching the application. The Settings client is now 600 × 510 pixels at 100% scale; the historical Settings screenshot below is 480 × 380.
 
 These are real PNGs saved by the executable through its native Win32/GDI client-rendering path. The captures are isolated and do not enumerate or operate real drives, read user settings, contact update servers or automate the desktop. Populated names and capacities below are explicitly synthetic fixtures. Native title bars and the Windows notification area are outside these client-area screenshots.
 
@@ -97,7 +105,7 @@ Synthetic Windows-refusal state, 100% scale. No removal request was made to obta
 ./scripts/capture.ps1 -OutputRoot E:/work/github/usb-eject/.test-output/visual-review -Measure
 ```
 
-Build the release target first. This explicitly launches disposable diagnostic instances, writes native client PNGs for empty/populated/error/settings/details states plus 150% scale, verifies embedded icon sizes, and exits. It never activates a normal running instance or performs device/network/settings operations. Fresh output paths are required. `--capture OUTPUT.png --screen SCREEN --scale 100|150|200` is the executable's developer-only render/save/exit mode; `--screen icons` instead renders native icon resources at their actual sizes, checks their alpha bounds and the tray metric, and exits without creating an application window. `--measure OUTPUT.json [--screen settings]` records bounded visible, hidden and restored idle intervals. The review script checks native colors during controller mutation, native owner-draw callbacks inside the production menu-dispatch scope, coalescing of reentrant draw requests and unexpected settled scene work. The menu probe does not open an OS popup or simulate input. Local native-checkbox backdrop requests are measured separately; they do not rebuild the Settings scene. These are not ordinary settings or a substitute for physical tray, keyboard or hardware checks. Additional reviewed captures: [drive details](docs/screenshots/drive-details.png) and [panel at 150%](docs/screenshots/panel-150.png).
+Build the release target first. This explicitly launches disposable diagnostic instances, writes native client PNGs for empty/populated/error/settings/details states plus 150% scale, verifies embedded icon sizes, and exits. It never activates a normal running instance or performs device/network/settings operations. Fresh output paths are required. `--capture OUTPUT.png --screen SCREEN --scale 100|150|200` is the executable's developer-only render/save/exit mode; Optional `--language en|ru|fr|de|es|it` and `--theme light|dark` select isolated appearance fixtures without reading user settings; the script accepts matching `-Language` and `-Theme` arguments. `--screen icons` instead renders native icon resources at their actual sizes, checks their alpha bounds and the tray metric, and exits without creating an application window. `--measure OUTPUT.json [--screen settings]` records bounded visible, hidden and restored idle intervals. The review script checks native colors during controller mutation, native owner-draw callbacks inside the production menu-dispatch scope, coalescing of reentrant draw requests and unexpected settled scene work. The menu probe does not open an OS popup or simulate input. Local native-checkbox backdrop requests are measured separately; they do not rebuild the Settings scene. These are not ordinary settings or a substitute for physical tray, keyboard or hardware checks. Additional reviewed captures: [drive details](docs/screenshots/drive-details.png) and [panel at 150%](docs/screenshots/panel-150.png).
 
 ## License
 

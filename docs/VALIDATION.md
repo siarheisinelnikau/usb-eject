@@ -1,5 +1,25 @@
 # Local validation record
 
+## v0.2.0 — localization and appearance (code-only verification)
+
+Implemented an explicit 135-message catalog for English, Russian, French, German, Spanish and Italian. Primary actions, Settings, tray menus and notifications, device/volume headings, operation guidance, update controls, protection/veto reasons and known error prefixes use the catalog. Device names, aliases, paths, serials and Windows diagnostic codes/sources remain data. A lookup audit found only punctuation/branding format wrappers and developer diagnostic strings outside the catalog.
+
+Settings now offers native language names and Light / Dark controls, with a 600 × 510 client at 100% scale to accommodate translations. Both choices save on the existing bounded settings worker and apply after success without restarting. Failed saves restore the saved selections. Existing schema-1 settings keep aliases and startup-update preference; missing new fields default to English and Light. Retained font references are updated in every native control before old fonts are released, including hidden windows.
+
+Completed on the final v0.2.0 source using `scripts/verify.ps1 -Offline -Package` under the shared bounded build semaphore:
+
+- `cargo fmt --all -- --check` passed.
+- `cargo clippy --locked --all-targets --offline --jobs 2 -- -D warnings` passed.
+- `cargo test --locked --all-targets --offline --jobs 2` passed: 19 library tests and 3 native-UI geometry tests. New tests check complete catalogs and interpolation variables, literal UI-message coverage, legacy settings migration/roundtrip, and unchanged diagnostic paths/codes.
+- Optimized Windows x64 packaging passed. PE architecture, GUI subsystem, asInvoker / PerMonitorV2 manifest, version/name resources, static-CRT imports, license notices and SHA-256 manifest checks passed without starting the target executable.
+- Resource-only `LoadImageW` / `DrawIconEx` proof loaded all eight embedded icon sizes (16/20/24/32/40/48/64/256). The generated PNG was inspected on both backgrounds; the established artwork is intact. This is not OS tray/window integration evidence.
+
+Packaged asset: `UsbEject-v0.2.0.exe`, 2,263,552 bytes, SHA-256 `6f5b9f4bc5e1dd5e56b2423d05330f6cbf1f87552eb025a7b97ccba501c6087c`. Evidence: [package inspection](validation/package-v0.2.0.json), [native icon resources](validation/package-icons-v0.2.0.json).
+
+Source inspection confirms the existing CPU Win32/GDI renderer, blocking `GetMessageW` loop, coalesced deferred redraws and hidden-window dirty tracking. Appearance changes request bounded redraws only after a user preference is saved. No new recurring render/layout timer was introduced. The developer capture mode accepts isolated language/theme fixtures (`--language en|ru|fr|de|es|it`, `--theme light|dark`), with matching script arguments and palette expectations, for future authorized review.
+
+The current repository instruction prohibits launching the application. Therefore no v0.2.0 client screenshots, visible/hidden/restore measurements, interaction, real-device enumeration/ejection or updater installation were executed. The runtime rendering gate remains incomplete for this binary. Earlier v0.1.3 measurements and README client images below are historical evidence, not a new performance/visual pass. Windows-owned popup-menu chrome follows Windows appearance; app-owned client controls use the selected palette.
+
 ## v0.1.3 — popup redraw loop, excess UI and misplaced Settings
 
 Source inspection found that `App::tray_menu` held `APP`'s mutable borrow throughout `TrackPopupMenu`. Windows' nested dispatch could then fail to enter the owner-draw handler; that fallback posted another redraw message, whose invalidation generated more callbacks while the same borrow remained active. The known unsafe loop was removed before diagnostic launching. No interactive reproduction of that old busy path was attempted.

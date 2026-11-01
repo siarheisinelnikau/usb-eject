@@ -1,10 +1,17 @@
-param([string]$OutputRoot = '', [switch]$Measure)
+param(
+    [string]$OutputRoot = '',
+    [switch]$Measure,
+    [ValidateSet('en','ru','fr','de','es','it')][string]$Language = 'en',
+    [ValidateSet('light','dark')][string]$Theme = 'light'
+)
 $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $Executable = Join-Path $RepoRoot 'target\x86_64-pc-windows-msvc\release\UsbEject.exe'
 if (-not $OutputRoot) { $OutputRoot = Join-Path $RepoRoot ('.test-output\visual-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')) }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+$AppearanceArgs = @('--language', $Language, '--theme', $Theme)
+$ExpectedBackground = if ($Theme -eq 'dark') { 24 -bor (32 -shl 8) -bor (41 -shl 16) } else { 16777215 }
 function Invoke-BoundedDiagnostic([string[]]$Arguments, [int]$Timeout) {
     $StartInfo = [Diagnostics.ProcessStartInfo]::new($Executable)
     $StartInfo.WorkingDirectory = $RepoRoot
@@ -24,26 +31,26 @@ function Invoke-BoundedDiagnostic([string[]]$Arguments, [int]$Timeout) {
 foreach ($Screen in @('empty', 'sample', 'error', 'settings', 'details')) {
     $Path = Join-Path $OutputRoot "$Screen.png"
     if (Test-Path -LiteralPath $Path) { throw "Refusing to reuse a previous capture: $Path" }
-    Invoke-BoundedDiagnostic @('--capture', $Path, '--screen', $Screen) 12000
+    Invoke-BoundedDiagnostic (@('--capture', $Path, '--screen', $Screen) + $AppearanceArgs) 12000
     if (-not (Test-Path -LiteralPath $Path)) { throw "Capture was not created: $Path" }
     $CaptureMetadata = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($Path, 'capture.json')) -Raw | ConvertFrom-Json
     foreach ($Case in @('under_state_borrow','outside_state_borrow')) {
-        if ($CaptureMetadata.reentrant_palette.$Case | Where-Object { $_.background -ne 16777215 -or -not $_.brush_available }) { throw "Reentrant palette regression: $Screen / $Case" }
+        if ($CaptureMetadata.reentrant_palette.$Case | Where-Object { $_.background -ne $ExpectedBackground -or -not $_.brush_available }) { throw "Reentrant palette regression: $Screen / $Case" }
     }
     if (-not $CaptureMetadata.menu_dispatch_probe.controller_reentrant -or -not $CaptureMetadata.menu_dispatch_probe.borrowed_entry_rejected -or $CaptureMetadata.menu_dispatch_probe.new_deferrals -ne 0) { throw "Nested menu-dispatch regression: $Screen" }
 }
 $ScaledPath = Join-Path $OutputRoot 'sample-150.png'
-Invoke-BoundedDiagnostic @('--capture', $ScaledPath, '--screen', 'sample', '--scale', '150') 12000
+Invoke-BoundedDiagnostic (@('--capture', $ScaledPath, '--screen', 'sample', '--scale', '150') + $AppearanceArgs) 12000
 $IconPath = Join-Path $OutputRoot 'tray-icons.png'
 Invoke-BoundedDiagnostic @('--capture', $IconPath, '--screen', 'icons') 12000
 if (-not (Test-Path -LiteralPath $IconPath)) { throw 'Native icon proof was not created' }
 if ($Measure) {
     $MeasurePath = Join-Path $OutputRoot 'rendering-load.json'
-    Invoke-BoundedDiagnostic @('--measure', $MeasurePath) 30000
+    Invoke-BoundedDiagnostic (@('--measure', $MeasurePath) + $AppearanceArgs) 30000
     if (-not (Test-Path -LiteralPath $MeasurePath)) { throw 'Measurement report was not created' }
     Get-Content -LiteralPath $MeasurePath -Raw
     $SettingsMeasurePath = Join-Path $OutputRoot 'settings-rendering-load.json'
-    Invoke-BoundedDiagnostic @('--measure', $SettingsMeasurePath, '--screen', 'settings') 30000
+    Invoke-BoundedDiagnostic (@('--measure', $SettingsMeasurePath, '--screen', 'settings') + $AppearanceArgs) 30000
     Get-Content -LiteralPath $SettingsMeasurePath -Raw
     foreach ($ReportPath in @($MeasurePath, $SettingsMeasurePath)) {
         $Report = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json

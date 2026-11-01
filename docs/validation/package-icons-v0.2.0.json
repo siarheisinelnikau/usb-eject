@@ -1,0 +1,87 @@
+{
+  "executable": "E:\\work\\github\\usb-eject\\dist\\UsbEject-v0.2.0.exe",
+  "sha256": "6f5b9f4bc5e1dd5e56b2423d05330f6cbf1f87552eb025a7b97ccba501c6087c",
+  "scope": "Resource-only LoadImageW / DrawIconEx proof; application not launched; OS tray/window integration unverified",
+  "icons": [
+    {
+      "size": 16,
+      "visiblePixels": 192,
+      "alphaBounds": [
+        1,
+        1,
+        14,
+        14
+      ]
+    },
+    {
+      "size": 20,
+      "visiblePixels": 312,
+      "alphaBounds": [
+        1,
+        1,
+        18,
+        18
+      ]
+    },
+    {
+      "size": 24,
+      "visiblePixels": 464,
+      "alphaBounds": [
+        1,
+        1,
+        22,
+        22
+      ]
+    },
+    {
+      "size": 32,
+      "visiblePixels": 764,
+      "alphaBounds": [
+        2,
+        2,
+        29,
+        29
+      ]
+    },
+    {
+      "size": 40,
+      "visiblePixels": 1248,
+      "alphaBounds": [
+        2,
+        2,
+        37,
+        37
+      ]
+    },
+    {
+      "size": 48,
+      "visiblePixels": 1716,
+      "alphaBounds": [
+        3,
+        3,
+        44,
+        44
+      ]
+    },
+    {
+      "size": 64,
+      "visiblePixels": 3044,
+      "alphaBounds": [
+        4,
+        4,
+        59,
+        59
+      ]
+    },
+    {
+      "size": 256,
+      "visiblePixels": 48328,
+      "alphaBounds": [
+        16,
+        16,
+        239,
+        239
+      ]
+    }
+  ]
+}
