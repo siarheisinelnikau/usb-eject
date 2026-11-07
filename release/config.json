@@ -1,0 +1,14 @@
+{
+  "repository": "siarheisinelnikau/usb-eject",
+  "product": "UsbEject",
+  "kind": "desktop",
+  "assets": [
+    {
+      "name": "UsbEject-v{version}.exe"
+    }
+  ],
+  "notices": true,
+  "checksum_aliases": [
+    "SHA256SUMS"
+  ]
+}
